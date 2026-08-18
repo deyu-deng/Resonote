@@ -197,10 +197,12 @@ class BasicPitchBackend(TranscriptionBackend):
 
         # predict returns (model_output, audio_data, audio_rate)
         model_output, _, _ = predict(path)
-        # note_creation.model_output_to_notes returns a pretty_midi object
-        midi_data = note_creation.model_output_to_notes(
+        # basic_pitch >= 0.4 returns a (PrettyMIDI, note_events) tuple;
+        # older versions returned the PrettyMIDI object directly.
+        midi_out = note_creation.model_output_to_notes(
             model_output, onset_thresh=0.5, frame_thresh=0.3,
-            infer_onsets=True, min_note_len=58, melodia_trick=True)
+            infer_onsets=True, min_note_len=11, melodia_trick=True)
+        midi_data = midi_out[0] if isinstance(midi_out, tuple) else midi_out
 
         notes = []
         for tid, instr in enumerate(midi_data.instruments):

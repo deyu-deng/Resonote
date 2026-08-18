@@ -3,6 +3,7 @@ pyguitarpro>=0.11
 pretty_midi>=0.2.11
 numpy>=2.0               # 3.13 只有 numpy>=2 的预编译 wheel;1.x 需源码编译且会失败
 soundfile>=0.12          # audio I/O for L2 separation (lightweight, libsndfile)
+setuptools<81            # basic_pitch/resampy 依赖 pkg_resources，setuptools 81+ 已移除，会导致 import 失败
 
 # Audio transcription (L3) — Basic-Pitch (pulls TensorFlow ~1GB).
 # Enables mp3/wav input. F1≈0.43: good for clean single-instrument audio,
