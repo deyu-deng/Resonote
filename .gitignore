@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated artifacts
+out.gp5
+out.html
+out.mid
+out.wav
+dump_*/
+
+# Web runtime output
+web/results/
+
+# WorkBuddy internal (agent memory/state) — not product source
+.workbuddy/

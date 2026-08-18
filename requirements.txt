@@ -1,0 +1,25 @@
+# Core (always required)
+pyguitarpro>=0.11
+pretty_midi>=0.2.11
+numpy>=2.0               # 3.13 只有 numpy>=2 的预编译 wheel;1.x 需源码编译且会失败
+soundfile>=0.12          # audio I/O for L2 separation (lightweight, libsndfile)
+
+# Audio transcription (L3) — Basic-Pitch (pulls TensorFlow ~1GB).
+# Enables mp3/wav input. F1≈0.43: good for clean single-instrument audio,
+# rough for dense mixes (pair with demucs below for full songs).
+basic_pitch
+
+# Source separation (L2) — Demucs (pulls PyTorch ~800MB + model weights).
+# Splits a full-song mix into vocals/bass/other stems before transcription,
+# materially improving mp3 quality. Optional but recommended for full songs.
+demucs
+
+# Optional (NOT installed by default):
+#   YourMT3+ (SOTA AMT, F1≈0.85, needs GPU + checkpoint):
+#     git clone https://github.com/TEAMuP-dev/yourMT3 && pip install -e .
+#   madmom (high-accuracy chord/beat on raw audio):
+#     pip install madmom
+
+# Dev (tests)
+pytest
+

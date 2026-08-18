@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Resonote — melody to fingerstyle guitar tab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <!-- ambient animated backdrop -->
+  <div class="aurora" aria-hidden="true">
+    <span class="blob b1"></span>
+    <span class="blob b2"></span>
+    <span class="blob b3"></span>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">♪</span>
+      <span class="wordmark">Resonote</span>
+    </div>
+    <div class="theme-switch" role="group" aria-label="Theme">
+      <button data-theme-set="system" title="System" class="active">◐</button>
+      <button data-theme-set="light"  title="Light">☀</button>
+      <button data-theme-set="dark"   title="Dark">☾</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>Drop a melody.<br><span class="grad">Get a fingerstyle tab.</span></h1>
+      <p class="lede">Audio or MIDI in — a playable guitar-pro tab and a listenable
+        preview out. No instrument required to start.</p>
+    </section>
+
+    <!-- controls -->
+    <section class="controls glass">
+      <label class="field">
+        <span>Style</span>
+        <select id="style">
+          <option value="fingerstyle">Fingerstyle</option>
+          <option value="folk">Folk</option>
+          <option value="jazz">Jazz</option>
+          <option value="classical">Classical</option>
+        </select>
+      </label>
+      <label class="field grow">
+        <span>Arrangement hint <em>(optional)</em></span>
+        <input id="instruction" type="text" placeholder="e.g. make it fuller, simpler, jazz voicing">
+      </label>
+      <button id="sampleBtn" class="ghost">Try the sample</button>
+    </section>
+
+    <!-- drop zone -->
+    <section id="drop" class="dropzone glass" tabindex="0" role="button"
+             aria-label="Upload a MIDI or audio file">
+      <div class="dz-inner">
+        <div class="dz-icon" aria-hidden="true">⤓</div>
+        <p class="dz-title">Drag &amp; drop a file here</p>
+        <p class="dz-sub">or click to browse · <strong>.mid / .midi / .mp3 / .wav</strong></p>
+      </div>
+      <input id="file" type="file" accept=".mid,.midi,.mp3,.wav,audio/*" hidden>
+    </section>
+
+    <!-- status -->
+    <div id="status" class="status" hidden></div>
+
+    <!-- result -->
+    <section id="result" class="result" hidden>
+      <div class="stats" id="stats"></div>
+
+      <div class="grid">
+        <div class="card glass audio-card">
+          <h3>Listen</h3>
+          <audio id="audio" controls preload="auto"></audio>
+          <p class="hint">Synthesized preview — enough to judge the arrangement before you play.</p>
+        </div>
+        <div class="card glass actions-card">
+          <h3>Download</h3>
+          <div class="dl">
+            <a id="dlGp5"  class="btn" download>⬇ Guitar Pro (.gp5)</a>
+            <a id="dlMidi" class="btn" download>⬇ MIDI (.mid)</a>
+            <a id="dlHtml" class="btn" target="_blank" rel="noopener">↗ Tab preview</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="card glass tab-card">
+        <h3>Tablature</h3>
+        <pre id="tab" class="tab"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>Resonote · melody → fingerstyle guitar tab</span>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>
