@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline import run, is_midi
 from transcribe import yourmt3_available, basic_pitch_available
 from separate import demucs_available
+from arrangement import is_llm_configured
 
 import json
 
@@ -109,6 +110,11 @@ def main():
     ap.add_argument("--instruction", default="",
                     help="natural-language arrangement hint for the L5 judgment layer "
                          "(e.g. \"simpler\", \"make it fuller\", \"jazz voicing\")")
+    ap.add_argument("--llm", action="store_true",
+                    help="route the L5 judgment layer through a real LLM instead of the "
+                         "rules skeleton. Requires RESONOTE_LLM_API_KEY (OpenAI-compatible "
+                         "endpoint). When --instruction is given and an LLM is configured, "
+                         "the LLM is auto-used even without this flag.")
     args = ap.parse_args()
 
     # --- figure out the input mode (for friendly console output) ---
@@ -125,6 +131,17 @@ def main():
             amt_label = "yourmt3+" if yourmt3_available() else "basic-pitch"
         print(f"[audio] separation={sep_label}  amt={amt_label}")
 
+    # --- decide the judgment backend ---
+    use_llm = bool(args.instruction) and is_llm_configured()
+    if args.llm:
+        use_llm = True
+    if use_llm and not is_llm_configured():
+        ap.error("--llm requested but no LLM provider is configured "
+                 "(set RESONOTE_LLM_API_KEY). The rules layer is the fallback.")
+    print(f"[judge] backend={'llm' if use_llm else 'rules'}"
+          + ("" if use_llm or not args.instruction else
+             "  (tip: set RESONOTE_LLM_API_KEY to enable LLM on --instruction)"))
+
     # --- run the full pipeline (L1 -> L8) ---
     res = run(
         args.input,
@@ -134,6 +151,7 @@ def main():
         amt=args.amt,
         style=args.style,
         instruction=args.instruction,
+        llm=use_llm,
         gp5_path=args.out,
         midi_path=args.midi,
         wav_path=args.wav,

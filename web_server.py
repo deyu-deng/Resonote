@@ -27,6 +27,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from pipeline import run
+from arrangement import is_llm_configured
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(_HERE, "web")
@@ -43,6 +44,7 @@ def _params_from(query: str) -> dict:
         "instruction": qs.get("instruction", [""])[0],
         "no_separate": qs.get("no_separate", ["0"])[0].lower() in ("1", "true", "yes"),
         "amt": qs.get("amt", ["auto"])[0],
+        "llm": qs.get("llm", ["0"])[0].lower() in ("1", "true", "yes"),
     }
 
 
@@ -82,13 +84,20 @@ def arrange_request(body: bytes, filename: str, params: dict) -> dict:
         input_path = tmp.name
 
     try:
+        instruction = params.get("instruction", "")
+        use_llm = bool(params.get("llm", False)) or (
+            bool(instruction) and is_llm_configured())
+        if params.get("llm", False) and not is_llm_configured():
+            return {"ok": False,
+                    "error": "LLM requested but RESONOTE_LLM_API_KEY is not set."}
         res = run(
             input_path,
             demo=is_demo,
             no_separate=params.get("no_separate", False),
             amt=params.get("amt", "auto"),
             style=params.get("style", "fingerstyle"),
-            instruction=params.get("instruction", ""),
+            instruction=instruction,
+            llm=use_llm,
             gp5_path=os.path.join(out_dir, "out.gp5"),
             midi_path=os.path.join(out_dir, "out.mid"),
             wav_path=os.path.join(out_dir, "out.wav"),
@@ -111,6 +120,7 @@ def arrange_request(body: bytes, filename: str, params: dict) -> dict:
         "key": res.key,
         "role_counts": res.role_counts,
         "note_count": len(res.placed),
+        "judge_backend": "llm" if use_llm else "rules",
         "gp5_url": f"/results/{rid}/out.gp5",
         "midi_url": f"/results/{rid}/out.mid",
         "wav_url": f"/results/{rid}/out.wav",

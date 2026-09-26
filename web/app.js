@@ -13,6 +13,7 @@
   const fileInp = $("#file");
   const styleSel = $("#style");
   const instInp  = $("#instruction");
+  const llmChk   = $("#llm");
   const sampleBtn = $("#sampleBtn");
   const statusEl  = $("#status");
   const resultEl  = $("#result");
@@ -83,6 +84,7 @@
     const p = new URLSearchParams();
     p.set("style", styleSel.value);
     if (instInp.value.trim()) p.set("instruction", instInp.value.trim());
+    if (llmChk.checked) p.set("llm", "1");
     return p.toString();
   }
 
@@ -98,7 +100,8 @@
       chip("Notes", d.note_count) +
       chip("Melody", rc.melody || 0) +
       chip("Bass", rc.bass || 0) +
-      chip("Harmony", rc.harmony || 0);
+      chip("Harmony", rc.harmony || 0) +
+      chip("Judge", (d.judge_backend || "rules") === "llm" ? "AI" : "Rules");
 
     audioEl.src = d.wav_url;
     dlGp5.href = d.gp5_url;

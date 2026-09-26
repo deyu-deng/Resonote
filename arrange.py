@@ -178,18 +178,24 @@ def arrange(notes,
             analysis=None,
             instructions: str = "",
             judge_backend: str = "auto",
-            style: str = "fingerstyle") -> List[PlacedNote]:
+            style: str = "fingerstyle",
+            llm: bool = False) -> List[PlacedNote]:
     """Build the L5 arrangement, then finger every role.
 
     With ``analysis=None`` (or a bare melody), only the melody is fingered —
     identical to the old behaviour. With an ``AnalysisResult``, monophonic input
     gets derived bass + harmony and a full fingerstyle arrangement.
+
+    ``llm=True`` routes the judgment layer through a real LLM (requires an
+    OpenAI-compatible provider configured via env). Falls back to ``judge_backend``
+    otherwise.
     """
     notes = list(notes)
     if not notes:
         return []
 
-    arr = build_arrangement(notes, analysis, instructions, judge_backend, style)
+    backend = "llm" if llm else judge_backend
+    arr = build_arrangement(notes, analysis, instructions, backend, style)
 
     # Finger the accompaniment FIRST so we know which strings it occupies,
     # then keep the melody off those strings at overlapping instants.

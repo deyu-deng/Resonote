@@ -20,6 +20,10 @@ Design (per the approved PLAN.md):
 
 from __future__ import annotations
 
+import json
+import os
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, List, Optional, Sequence, Tuple
@@ -323,15 +327,107 @@ class LLMJudgmentLayer:
 
     @staticmethod
     def _build_prompt(arr: Arrangement, instructions: str) -> str:
+        def sample(notes, k: int = 10) -> str:
+            out = [f"{n.role.value}@{round(n.onset, 2)}s p{n.pitch}" for n in notes[:k]]
+            return ", ".join(out) if out else "(none)"
+
         lines = [
             "You are the musical judgment layer of a fingerstyle guitar arranger.",
+            "Given the candidate arrangement below and the user's instruction, return edits.",
             f"Key: {arr.key or 'unknown'}  Tempo: {arr.tempo} BPM  Style: {arr.style}",
             f"Melody notes: {len(arr.melody)}  Bass: {len(arr.bass)}  Harmony: {len(arr.harmony)}",
+            f"Melody sample: {sample(arr.melody)}",
+            f"Bass sample: {sample(arr.bass)}",
+            f"Harmony sample: {sample(arr.harmony)}",
             f"User instruction: {instructions!r}",
-            "Return a JSON list of edits: {\"op\":\"drop\"|\"set_density\"|\"set_style\", "
-            "\"target\":\"harmony\"|\"all\", \"value\":<number|string>, \"reason\":\"...\"}",
+            "",
+            "Supported edit ops (return a JSON object {\"edits\":[...]}):",
+            '  {"op":"set_density","target":"all","value":"full"|"light","reason":"..."}',
+            '  {"op":"set_style","target":"all","value":"fingerstyle"|"folk"|"jazz"|"classical","reason":"..."}',
+            '  {"op":"drop","target":"harmony","value":<onset_seconds_float>,"reason":"..."}',
+            '  {"op":"keep","target":"all","reason":"..."}',
+            "Only output the JSON. Interpret the instruction musically "
+            "(e.g. '副歌低音再饱满点' -> fuller density; '简单一点' -> light density).",
         ]
         return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# LLM client adapter (OpenAI-compatible, env-configured, zero extra deps)
+# --------------------------------------------------------------------------- #
+def is_llm_configured() -> bool:
+    """True if a provider API key is present in the environment."""
+    return bool(os.environ.get("RESONOTE_LLM_API_KEY"))
+
+
+def _call_llm(prompt: str) -> str:
+    """Call an OpenAI-compatible /chat/completions endpoint via stdlib urllib.
+
+    Raises a clear RuntimeError on any failure rather than returning a fake
+    judgment. Requires RESONOTE_LLM_API_KEY; optionally RESONOTE_LLM_BASE_URL
+    (default https://api.openai.com/v1) and RESONOTE_LLM_MODEL (default gpt-4o-mini).
+    """
+    api_key = os.environ.get("RESONOTE_LLM_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "LLM judgment requested but RESONOTE_LLM_API_KEY is not set.\n"
+            "Set RESONOTE_LLM_BASE_URL (default https://api.openai.com/v1), "
+            "RESONOTE_LLM_API_KEY and RESONOTE_LLM_MODEL, then retry.")
+    base = os.environ.get("RESONOTE_LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    model = os.environ.get("RESONOTE_LLM_MODEL", "gpt-4o-mini")
+    url = f"{base}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.2,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {api_key}")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"LLM request failed: {e}") from e
+    try:
+        return body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise RuntimeError(f"Unexpected LLM response shape: {e} ({body})") from e
+
+
+def _parse_edits(text: str) -> List[Edit]:
+    """Parse the LLM's JSON response into Edit objects. Raises on malformed JSON."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"LLM did not return valid JSON: {e}\nraw: {text[:500]}") from e
+    if isinstance(data, dict) and "edits" in data:
+        items = data["edits"]
+    elif isinstance(data, list):
+        items = data
+    else:
+        raise RuntimeError(
+            f"LLM JSON must be a list of edits or {{\"edits\":[...]}}; got: {text[:200]}")
+    edits: List[Edit] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        op = it.get("op")
+        if op not in ("drop", "set_density", "set_style", "keep"):
+            edits.append(Edit("keep", "all", None, f"llm-unknown-op:{op}"))
+            continue
+        edits.append(Edit(op=op, target=it.get("target", "all"),
+                          value=it.get("value"), reason=it.get("reason", "")))
+    return edits
+
+
+def make_llm_fn() -> Callable[[str], List[Edit]]:
+    """Build a prompt -> Edits callable for LLMJudgmentLayer from env config."""
+    def fn(prompt: str) -> List[Edit]:
+        return _parse_edits(_call_llm(prompt))
+    return fn
 
 
 def judge(arr: Arrangement, instructions: str = "", backend: str = "auto") -> Arrangement:
@@ -343,7 +439,7 @@ def judge(arr: Arrangement, instructions: str = "", backend: str = "auto") -> Ar
         arr.judgment_log.append("judged by RULES layer")
         return _apply_edits(arr, edits)
     if backend == "llm":
-        layer = LLMJudgmentLayer()
+        layer = LLMJudgmentLayer(llm_fn=make_llm_fn())
         edits = layer.review(arr, instructions)
         arr.judgment_log.append("judged by LLM layer")
         return _apply_edits(arr, edits)
