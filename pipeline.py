@@ -137,7 +137,11 @@ def run(input_path: Optional[str] = None, *,
             midi_bytes = _write_to_temp(
                 lambda p: placed_to_midi(placed, p, tempo=analysis.tempo))
 
-    html_str = html_preview_string(placed)
+    html_str = html_preview_string(
+        placed,
+        tempo=float(analysis.tempo),
+        subtitle=(getattr(analysis, "key", "") or ""),
+        audio_src=(os.path.basename(wav_path) if wav_path else None))
     if html_path:
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_str)
@@ -147,7 +151,7 @@ def run(input_path: Optional[str] = None, *,
         placed=placed,
         analysis=analysis,
         summary=format_summary(analysis),
-        ascii_tab=ascii_tab(placed),
+        ascii_tab=ascii_tab(placed, tempo=float(analysis.tempo)),
         html_preview=html_str,
         gp5_bytes=gp5_bytes,
         wav_bytes=wav_bytes,
