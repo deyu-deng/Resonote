@@ -11,11 +11,8 @@ __pycache__/
 *.env.local
 !.env.example
 
-# Generated artifacts
-out.gp5
-out.html
-out.mid
-out.wav
+# Generated artifacts (tabs/previews written by a run)
+out.*
 dump_*/
 
 # Web runtime output
