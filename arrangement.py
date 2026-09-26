@@ -495,6 +495,86 @@ def _sanitize_edits(edits: List[Edit], arr: Arrangement) -> List[Edit]:
     return kept
 
 
+# How many strings two hands can start at the same instant, per style.
+MAX_PLUCK_BY_STYLE = {"fingerstyle": 4, "sparse": 3, "strum": 6}
+DEFAULT_MAX_PLUCK = 4
+# Per-onset budget. A guitar melody is one line and there is one bass; whatever
+# is left over goes to the chord voices. Budgeting per role (instead of a flat
+# global cap) stops a dense AMT melody from starving the accompaniment.
+PLUCK_ROLE_BUDGET = {"melody": 1, "bass": 1}
+# Onsets closer than this are perceptually (and after quantisation) one event.
+PLUCK_CLUSTER_TOL = 0.05
+# Which role wins when a cluster has to be thinned (lower = keep first).
+_PLUCK_ROLE_RANK = {"melody": 0, "bass": 1, "harmony": 2}
+
+
+def cap_concurrent_plucks(arr: Arrangement,
+                          max_pluck: Optional[int] = None) -> Arrangement:
+    """Limit how many notes are freshly plucked at the same instant.
+
+    A guitarist has two hands: you can *hold* six strings (that is just a
+    chord ringing), but you can only *start* a few of them at once. Dense AMT
+    output violates this constantly — 5-6 plucks on every eighth note — which
+    yields a tab that is structurally valid yet unplayable.
+
+    Notes are clustered by onset, ranked by role (melody > bass > harmony) and
+    then by velocity, and everything past ``max_pluck`` is dropped.
+    """
+    if max_pluck is None:
+        max_pluck = MAX_PLUCK_BY_STYLE.get((arr.style or "").strip().lower(),
+                                           DEFAULT_MAX_PLUCK)
+    if max_pluck <= 0:
+        return arr
+
+    grouped = [(rn, role) for role in ("melody", "bass", "harmony")
+               for rn in getattr(arr, role)]
+    if not grouped:
+        return arr
+
+    # cluster by onset (tolerance-based, so near-simultaneous notes group too)
+    clusters: List[List] = []
+    for rn, role in sorted(grouped, key=lambda x: (x[0].onset, x[1])):
+        if clusters and rn.onset - clusters[-1][0][0].onset <= PLUCK_CLUSTER_TOL:
+            clusters[-1].append((rn, role))
+        else:
+            clusters.append([(rn, role)])
+
+    keep_ids = set()
+    dropped = 0
+    for cl in clusters:
+        if len(cl) <= max_pluck:
+            for rn, _ in cl:
+                keep_ids.add(id(rn))
+            continue
+        by_role: dict = {}
+        for rn, role in cl:
+            by_role.setdefault(role, []).append(rn)
+
+        kept: List = []
+        for role, budget in PLUCK_ROLE_BUDGET.items():
+            lst = sorted(by_role.get(role, []), key=lambda x: (-x.velocity, -x.pitch))
+            kept += lst[:budget]
+            by_role[role] = lst[budget:]
+
+        # leftover budget goes to the chord voices (loudest / highest first)
+        left = max(0, max_pluck - len(kept))
+        harm = sorted(by_role.get("harmony", []), key=lambda x: (-x.velocity, -x.pitch))
+        kept += harm[:left]
+
+        for rn in kept:
+            keep_ids.add(id(rn))
+        dropped += len(cl) - len(kept)
+
+    for role in ("melody", "bass", "harmony"):
+        setattr(arr, role, [rn for rn in getattr(arr, role)
+                            if id(rn) in keep_ids])
+    if dropped:
+        arr.judgment_log.append(
+            f"capped simultaneous plucks at {max_pluck} "
+            f"({arr.style}) -> dropped {dropped} notes for playability")
+    return arr
+
+
 def judge(arr: Arrangement, instructions: str = "", backend: str = "auto") -> Arrangement:
     """Run the judgment layer. backend: 'auto' | 'rules' | 'llm'."""
     if backend == "auto":
@@ -524,6 +604,7 @@ def build_arrangement(notes: Sequence[Note],
     arr.style = style
     arr = voice(arr)
     arr = judge(arr, instructions, judge_backend)
+    arr = cap_concurrent_plucks(arr)
     return arr
 
 

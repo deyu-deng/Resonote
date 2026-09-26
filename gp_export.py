@@ -84,6 +84,30 @@ def _build_beats(items, total: int):
         for g in range(s, min(s + l, total)):
             slot[g].append(p)
 
+    # Never emit a beat with no notes at all.
+    #
+    # pyguitarpro cannot round-trip one: `gp3.readBeat` returns 0 for
+    # BeatStatus.empty, so the reader's running `start` never advances and the
+    # next beat reuses (and overwrites) the same slot. Consecutive rests then
+    # collapse and every following beat shifts earlier, which silently
+    # corrupts any verification done by reading the file back.
+    #
+    # It is also what a guitarist does anyway: a chord keeps ringing until the
+    # next event. So carry the previous sounding set across silent slots -- the
+    # exporter marks those as tie continuations, not new plucks.
+    carry: list = []
+    for g in range(total):
+        if slot[g]:
+            carry = slot[g]
+        elif carry:
+            slot[g] = carry
+    # leading silence: borrow the first sounding set backwards
+    first = next((s for s in slot if s), [])
+    for g in range(total):
+        if slot[g]:
+            break
+        slot[g] = first
+
     beats = []
     s = 0
     while s < total:
@@ -145,6 +169,10 @@ def to_gp5(placed, out_path, tempo: float = 120, title: str = "Resonote",
                      [(1, 64), (2, 59), (3, 55), (4, 50), (5, 45), (6, 40)]]
 
     ticks_per_sec = QUARTER * tempo / 60.0
+    # Start the grid at the first sounding note so the tab has no leading
+    # silence (an empty leading beat cannot be read back, see _build_beats).
+    if placed:
+        anchor = min(anchor, min(p.onset for p in placed))
     items = _to_grid(placed, ticks_per_sec, anchor)
 
     total = max((s + l for s, l, _ in items), default=0)

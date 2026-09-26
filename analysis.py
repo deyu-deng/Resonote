@@ -211,51 +211,130 @@ def detect_key(notes: Sequence[Note]) -> str:
 # --------------------------------------------------------------------------- #
 # Beat / tempo detection from note onsets (IOI histogram)
 # --------------------------------------------------------------------------- #
-def detect_beats(notes: Sequence[Note]) -> Tuple[List[float], float]:
+# A "beat" must be musically plausible. Anything outside this window is a
+# subdivision or a bar, not a beat — folding by octaves resolves both.
+BEAT_MIN_BPM = 55.0
+BEAT_MAX_BPM = 190.0
+# Centre of the tempo prior used to break octave ties (94 vs 188 BPM, ...).
+TEMPO_PRIOR_BPM = 115.0
+# Onsets used for grid scoring (a 4-minute dense mix can have >10k onsets).
+_BEAT_SCORE_SAMPLE = 1200
+
+
+def _fold_period(p: float, lo: float, hi: float) -> float:
+    """Fold a period into [lo, hi] by doubling/halving (octave equivalence)."""
+    while p > hi:
+        p /= 2.0
+    while p < lo:
+        p *= 2.0
+    return p
+
+
+def detect_beats(notes: Sequence[Note],
+                 min_bpm: float = BEAT_MIN_BPM,
+                 max_bpm: float = BEAT_MAX_BPM) -> Tuple[List[float], float]:
     """Estimate a beat grid and tempo from note onsets.
 
-    Uses an inter-onset-interval histogram: the dominant small interval is
-    taken as the beat (or a subdivision). Good enough for already-quantized
-    MIDI; for raw audio prefer the madmom backend.
+    Two-stage estimator (pure Python, no deps):
+
+    1. **Candidates** — build an inter-onset-interval histogram, take the
+       dominant intervals, and fold each (plus its x2 / x4 / ÷2 / ÷4 variants)
+       into the musically plausible beat window ``[min_bpm, max_bpm]``. This
+       is what makes the detector robust: on dense AMT output the raw modal
+       IOI is a spurious 20-40 ms micro-onset, not a beat.
+    2. **Scoring** — for every candidate period, search the phase over one
+       period and score how well *all* onsets land on the resulting grid. The
+       best (period, phase) wins; ties break toward the dominant IOI, which
+       keeps a clean 120 BPM grid from collapsing to 60 BPM.
+
+    The grid is then rebuilt from the *winning period* — critically, the
+    period and the tempo are always the same number, so the bar/chord layers
+    downstream can never drift apart from the reported BPM.
     """
     onsets = sorted({round(n.onset, 4) for n in notes})
     if len(onsets) < 2:
         return ([n.onset for n in notes], 120.0)
 
-    # IOIs between consecutive onsets
     iois = [b - a for a, b in zip(onsets, onsets[1:]) if b - a > 1e-3]
     if not iois:
         return (onsets, 120.0)
 
-    # quantize IOIs to a histogram (resolution 20ms) to find the mode
+    lo, hi = 60.0 / max_bpm, 60.0 / min_bpm
+
+    # --- 1. candidate periods from the IOI histogram -----------------------
     res = 0.02
     buckets: dict[int, float] = {}
     for d in iois:
         b = round(d / res)
-        buckets[b] = buckets.get(b, 0.0) + (1.0 / len(iois))
-    mode_bucket = max(buckets, key=lambda k: buckets[k])
-    beat_int = max(mode_bucket * res, 1e-3)
+        buckets[b] = buckets.get(b, 0.0) + 1.0
+    ranked = sorted(buckets.items(), key=lambda kv: (-kv[1], kv[0]))
+    dom_p = _fold_period(max(ranked[0][0] * res, 1e-3), lo, hi)
 
-    # a beat interval longer than ~1.2s is probably a half/whole note; halve it
-    while beat_int > 1.2:
-        beat_int /= 2.0
+    cands = set()
+    for b, _ in ranked[:6]:
+        p0 = b * res
+        if p0 <= 1e-3:
+            continue
+        for k in (-2, -1, 0, 1, 2):
+            p = _fold_period(p0 * (2.0 ** k), lo, hi)
+            cands.add(round(p, 6))
+            # folding is deterministic, so also keep the neighbouring octave
+            # whenever it stays plausible -- otherwise every candidate collapses
+            # onto one value and the octave ambiguity can never be resolved.
+            if p * 2.0 <= hi:
+                cands.add(round(p * 2.0, 6))
+            if p / 2.0 >= lo:
+                cands.add(round(p / 2.0, 6))
+    if not cands:
+        return (onsets, 120.0)
 
-    tempo = 60.0 / beat_int
-    # snap tempo to a musical range
-    while tempo < 50:
-        tempo *= 2
-    while tempo > 240:
-        tempo /= 2
+    # --- 2. score each (period, phase) by onset alignment ------------------
+    t0, t1 = onsets[0], onsets[-1]
+    step = max(1, len(onsets) // _BEAT_SCORE_SAMPLE)
+    sample = onsets[::step]
 
-    # build a grid starting from the first onset
-    t0 = onsets[0]
-    t_end = onsets[-1] + beat_int
-    beats = []
-    t = t0
-    while t <= t_end + 1e-6:
-        beats.append(round(t, 4))
-        t += beat_int
-    return (beats, round(tempo, 1))
+    scored: List[Tuple[float, float, float]] = []   # (score, period, phase)
+    for p in sorted(cands):
+        tol = 0.18 * p
+        b_score, b_phase = -1.0, t0
+        for i in range(24):
+            ph = t0 + (i / 24.0) * p
+            s = 0.0
+            for o in sample:
+                k = round((o - ph) / p)
+                d = abs(o - (ph + k * p))
+                if d < tol:
+                    s += 1.0 - (d / tol) ** 2
+            if s > b_score:
+                b_score, b_phase = s, ph
+        scored.append((b_score, p, b_phase))
+    if not scored:
+        return (onsets, 120.0)
+
+    # --- 3. resolve octave ambiguity with a tempo prior --------------------
+    # A grid and its double fit the same onsets equally well whenever the
+    # onsets are noisy, so alignment alone cannot tell 94 BPM from 188 BPM.
+    # Among the candidates that explain the onsets essentially as well as the
+    # best one, pick the tempo closest to a common musical pulse.
+    smax = max(s[0] for s in scored)
+    near = [s for s in scored if s[0] >= 0.97 * smax] if smax > 0 else scored
+    best = min(near,
+               key=lambda s: (abs(math.log2((60.0 / s[1]) / TEMPO_PRIOR_BPM)),
+                              abs(math.log(s[1] / dom_p))))
+
+    period, phase = best[1], best[2]
+    tempo = round(60.0 / period, 1)
+
+    # --- rebuild the grid from the winning period --------------------------
+    beats: List[float] = []
+    t = phase
+    while t < t1 + period:
+        if t >= t0 - 1e-6:
+            beats.append(round(t, 4))
+        t += period
+    if not beats:
+        beats = [round(t0, 4)]
+    return (beats, tempo)
 
 
 # --------------------------------------------------------------------------- #
@@ -320,6 +399,39 @@ def _merge_adjacent(chords: List[Chord]) -> List[Chord]:
         else:
             out.append(c)
     return out
+
+
+def _enforce_min_duration(chords: List[Chord], min_dur: float) -> List[Chord]:
+    """Absorb chord segments shorter than ``min_dur`` into their neighbour.
+
+    A dense mix produces a lot of flickering one-bar (or shorter) chord
+    guesses. Every segment then spawns a full triad in the arrangement layer,
+    which turns the tab into an unplayable wall of chord stabs. Real harmony
+    changes at most once or twice per bar, so anything shorter than a bar is
+    noise — fold it into the preceding chord.
+    """
+    if len(chords) < 2 or min_dur <= 0:
+        return chords
+
+    out: List[Chord] = []
+    for c in chords:
+        if out and (c.end - c.start) < min_dur:
+            prev = out[-1]
+            out[-1] = Chord(prev.label, prev.root, prev.quality,
+                            prev.start, c.end,
+                            min(prev.confidence, c.confidence))
+        else:
+            out.append(c)
+
+    # a short tail segment has no successor to absorb it -> fold into previous
+    if len(out) > 1 and (out[-1].end - out[-1].start) < min_dur:
+        prev = out[-2]
+        out[-2] = Chord(prev.label, prev.root, prev.quality,
+                        prev.start, out[-1].end,
+                        min(prev.confidence, out[-1].confidence))
+        out.pop()
+    # absorbing can leave two same-label segments back to back -> re-merge
+    return _merge_adjacent(out)
 
 
 # --------------------------------------------------------------------------- #
@@ -414,6 +526,10 @@ def analyze(notes: Sequence[Note],
     beats, tempo = detect_beats(notes)
     bars = _build_bars(beats, max((n.onset + n.duration for n in notes), default=0.0))
     chords = _chord_timeline(notes, bars, allow_extensions=allow_ext)
+    # Harmony changes at most once per bar; shorter segments are detection
+    # noise and would each spawn a full triad downstream.
+    bar_len = 4.0 * (60.0 / tempo) if tempo > 0 else 2.0
+    chords = _enforce_min_duration(chords, min(max(bar_len, 0.6), 4.0))
     key = detect_key(notes)
 
     # per-bar chord labels for sectioning (None = rest/silent bar)
