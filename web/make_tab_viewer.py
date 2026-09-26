@@ -24,14 +24,38 @@ header { padding:1rem 1.5rem .5rem; }
 h1 { font-size:1.1rem; margin:0 0 .2rem; }
 .meta { color:#9fc3e8; font-size:.85rem; }
 #status { padding:.4rem 1.5rem; font-size:.85rem; color:#f0c674; }
-#viewer { padding:0 1.5rem 2rem; overflow-x:auto; }
-#viewer svg { max-width:none; }
+#viewer { padding:0 1.5rem 2rem; overflow-x:auto; background:#fff; border-radius:6px;
+          margin:0 1.5rem 2rem; }
+#viewer svg { max-width:none; display:block; transform-origin:top left; }
 #drop { margin:0 1.5rem 1rem; font-size:.85rem; color:#8a8a9a; }
 input[type=file] { color:#c9c9d8; }
 #err { white-space:pre-wrap; color:#ff8080; padding:0 1.5rem; font-size:.8rem; }
+.zoom { margin:0 1.5rem .6rem; font-size:.85rem; }
+/* alphaTab draws every music symbol as a glyph of the Bravura font. The
+   high-level AlphaTabApi injects this itself, but the low-level ScoreRenderer
+   we use does NOT -- without it every note is blank. */
+@font-face {
+  font-family: 'alphaTab';
+  src: url('https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.8.4/dist/font/Bravura.woff2') format('woff2'),
+       url('https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.8.4/dist/font/Bravura.woff') format('woff'),
+       url('https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.8.4/dist/font/Bravura.otf') format('opentype');
+  font-weight: normal; font-style: normal; font-display: block;
+}
+.at-surface * { cursor: default; vertical-align: top; overflow: visible; }
+.at { font-family: 'alphaTab'; speak: none; font-style: normal; font-weight: normal;
+      font-variant: normal; text-transform: none; line-height: 1;
+      -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+      font-size: 34px; overflow: visible !important; }
 </style></head>
 <body>
 <header><h1>__TITLE__</h1><div class="meta">__META__</div></header>
+<div class="zoom">缩放：
+  <select id="zoom">
+    <option value="0.6">60%</option><option value="0.8">80%</option>
+    <option value="1" selected>100%</option><option value="1.3">130%</option>
+    <option value="1.6">160%</option><option value="2">200%</option>
+  </select>
+</div>
 <div id="drop">换一个文件：<input type="file" id="pick" accept=".gp5,.gp4,.gp3,.gp,.gpx"></div>
 <div id="status">loading alphaTab from CDN…</div>
 <div id="err"></div>
@@ -75,6 +99,13 @@ async function renderScore(bytes, label) {
   });
   renderer.renderScore(score, score.tracks.map(t => t.index));
 }
+
+document.getElementById('zoom').addEventListener('change', ev => {
+  const z = parseFloat(ev.target.value);
+  for (const svg of viewer.querySelectorAll('svg')) {
+    svg.style.transform = 'scale(' + z + ')';
+  }
+});
 
 let alphaTab;
 try {

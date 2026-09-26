@@ -94,6 +94,8 @@ def main():
     ap.add_argument("-o", "--out", default="out.gp5", help="output .gp5 path")
     ap.add_argument("-t", "--tempo", type=int, default=120, help="BPM for the tab")
     ap.add_argument("--html", default=None, help="also write a standalone HTML preview")
+    ap.add_argument("--pdf", default=None,
+                    help="also write a printable tablature PDF (vector, no deps)")
     ap.add_argument("--midi", default=None, help="also write an audible preview .mid (pretty_midi)")
     ap.add_argument("--wav", default=None, help="also write an audible preview .wav (Karplus-Strong synth)")
     ap.add_argument("--demo", action="store_true",
@@ -188,6 +190,12 @@ def main():
 
     if args.html:
         print(f"\nWrote preview {args.html}")
+
+    if args.pdf:
+        from tab_pdf import write_tab_pdf
+        write_tab_pdf(res.placed, args.pdf, tempo=res.tempo,
+                      title=os.path.splitext(os.path.basename(args.pdf))[0])
+        print(f"\nWrote tablature PDF {args.pdf}")
     if args.midi:
         print(f"\nWrote preview MIDI {args.midi}")
     if args.wav:
