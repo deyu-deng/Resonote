@@ -112,7 +112,16 @@ def _emit_beat(voice, sounding, attacks, plen: int) -> None:
 
     beat.status = gp.BeatStatus.normal
     beat.duration = gp.Duration(value=_VALUE_FOR_LEN.get(plen, 8))
-    for p in sounding:
+    # A GP5 beat cannot hold two notes on the same string (physically
+    # impossible and it corrupts the file -- Guitar Pro then refuses to open
+    # it). Keep one note per string, preferring freshly attacked notes over
+    # tie continuations.
+    ordered = sorted(sounding, key=lambda p: id(p) not in attacks)
+    used: set = set()
+    for p in ordered:
+        if p.string in used:
+            continue
+        used.add(p.string)
         note = gp.Note(beat)
         note.string = p.string
         note.value = p.fret

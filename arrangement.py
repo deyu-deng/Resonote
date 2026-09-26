@@ -348,6 +348,9 @@ class LLMJudgmentLayer:
             '  {"op":"keep","target":"all","reason":"..."}',
             "Only output the JSON. Interpret the instruction musically "
             "(e.g. '副歌低音再饱满点' -> fuller density; '简单一点' -> light density).",
+            "IMPORTANT: 'fuller / denser / 饱满 / richer' means KEEP or ADD harmony — "
+            "never emit drop for those. Use drop only for 'simpler / lighter / sparser / 简单'.",
+            "If you set density to full, do not drop any harmony.",
         ]
         return "\n".join(lines)
 
@@ -379,9 +382,14 @@ def _call_llm(prompt: str) -> str:
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "response_format": {"type": "json_object"},
         "temperature": 0.2,
     }
+    # `response_format` is NOT universally supported: OpenAI accepts it,
+    # MiniMax rejects it with 400 ("unknown response_format type 'json_object'").
+    # Opt in explicitly (RESONOTE_LLM_JSON_MODE=1) — otherwise we ask for JSON
+    # in the prompt and _parse_edits strips code fences / prose.
+    if os.environ.get("RESONOTE_LLM_JSON_MODE", "").lower() in ("1", "true", "yes"):
+        payload["response_format"] = {"type": "json_object"}
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -397,19 +405,55 @@ def _call_llm(prompt: str) -> str:
         raise RuntimeError(f"Unexpected LLM response shape: {e} ({body})") from e
 
 
+def _strip_json_fences(text: str) -> str:
+    """Remove markdown code fences (```json ... ```) that many models add."""
+    t = (text or "").strip()
+    if not t.startswith("```"):
+        return t
+    lines = t.splitlines()
+    if lines and lines[0].lstrip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].rstrip().startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
 def _parse_edits(text: str) -> List[Edit]:
-    """Parse the LLM's JSON response into Edit objects. Raises on malformed JSON."""
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"LLM did not return valid JSON: {e}\nraw: {text[:500]}") from e
+    """Parse the LLM's JSON response into Edit objects.
+
+    Tolerates markdown code fences and surrounding prose (providers such as
+    MiniMax wrap JSON in ```json fences and cannot be asked for json_object
+    mode). Raises a clear RuntimeError when nothing parseable is found.
+    """
+    raw = text or ""
+    candidates = [raw, _strip_json_fences(raw)]
+    # last resort: slice out the outermost JSON object / array
+    for opener, closer in (("{", "}"), ("[", "]")):
+        i, j = raw.find(opener), raw.rfind(closer)
+        if i != -1 and j != -1 and j > i:
+            candidates.append(raw[i:j + 1])
+
+    last_err: Optional[Exception] = None
+    for cand in candidates:
+        try:
+            data = json.loads(cand)
+        except json.JSONDecodeError as e:
+            last_err = e
+            continue
+        return _edits_from_json(data, cand)
+
+    raise RuntimeError(
+        f"LLM did not return valid JSON ({last_err}).\nraw: {raw[:500]}")
+
+
+def _edits_from_json(data, raw: str) -> List[Edit]:
     if isinstance(data, dict) and "edits" in data:
         items = data["edits"]
     elif isinstance(data, list):
         items = data
     else:
         raise RuntimeError(
-            f"LLM JSON must be a list of edits or {{\"edits\":[...]}}; got: {text[:200]}")
+            f"LLM JSON must be a list of edits or {{\"edits\":[...]}}; got: {raw[:200]}")
     edits: List[Edit] = []
     for it in items:
         if not isinstance(it, dict):
@@ -430,6 +474,27 @@ def make_llm_fn() -> Callable[[str], List[Edit]]:
     return fn
 
 
+def _sanitize_edits(edits: List[Edit], arr: Arrangement) -> List[Edit]:
+    """Deterministic guard against self-contradicting LLM output.
+
+    LLMs (especially smaller ones) happily emit `set_density: full` and then
+    `drop harmony`, which thins the arrangement — the exact opposite of what
+    the user asked. Resolve the final density from the edits themselves and
+    suppress destructive harmony drops when it comes out as "full".
+    """
+    density = arr.density
+    for e in edits:
+        if e.op == "set_density" and e.value in ("full", "light"):
+            density = e.value
+    if density != "full":
+        return edits
+    kept = [e for e in edits if not (e.op == "drop" and e.target == "harmony")]
+    if len(kept) != len(edits):
+        kept.append(Edit("keep", "all", None,
+                         "sanitizer: suppressed harmony drops (density=full)"))
+    return kept
+
+
 def judge(arr: Arrangement, instructions: str = "", backend: str = "auto") -> Arrangement:
     """Run the judgment layer. backend: 'auto' | 'rules' | 'llm'."""
     if backend == "auto":
@@ -440,7 +505,7 @@ def judge(arr: Arrangement, instructions: str = "", backend: str = "auto") -> Ar
         return _apply_edits(arr, edits)
     if backend == "llm":
         layer = LLMJudgmentLayer(llm_fn=make_llm_fn())
-        edits = layer.review(arr, instructions)
+        edits = _sanitize_edits(layer.review(arr, instructions), arr)
         arr.judgment_log.append("judged by LLM layer")
         return _apply_edits(arr, edits)
     raise ValueError(f"unknown judgment backend: {backend!r}")

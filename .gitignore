@@ -4,6 +4,13 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Secrets — NEVER commit (LLM provider keys etc.)
+.env
+.env.*
+*.env
+*.env.local
+!.env.example
+
 # Generated artifacts
 out.gp5
 out.html

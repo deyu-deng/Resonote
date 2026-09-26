@@ -174,6 +174,33 @@ def place_harmony(notes) -> List[PlacedNote]:
     return placed
 
 
+def _resolve_string_collisions(placed: List[PlacedNote]) -> List[PlacedNote]:
+    """No two notes sounding at the same instant may share a string.
+
+    One string can only be fretted in one place at a time, so a collision is
+    both unplayable and illegal in GP5 (it corrupts the file). Move the
+    conflicting note to the nearest free string where its pitch is playable.
+    """
+    by_onset: dict = {}
+    for p in placed:
+        by_onset.setdefault(round(p.onset, 4), []).append(p)
+
+    for _, grp in by_onset.items():
+        used: dict = {}
+        for p in grp:
+            if p.string not in used:
+                used[p.string] = p
+                continue
+            free = [(s, f) for (s, f) in candidate_positions(p.pitch)
+                    if s not in used]
+            if not free:
+                continue          # nothing playable; exporter will de-dupe
+            s, f = min(free, key=lambda c: abs(c[0] - p.string))
+            p.string, p.fret = s, f
+            used[s] = p
+    return placed
+
+
 def arrange(notes,
             analysis=None,
             instructions: str = "",
@@ -210,4 +237,4 @@ def arrange(notes,
     placed += accomp
 
     placed.sort(key=lambda p: (round(p.onset, 4), p.pitch))
-    return placed
+    return _resolve_string_collisions(placed)

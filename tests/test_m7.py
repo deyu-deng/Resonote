@@ -132,3 +132,59 @@ def test_make_llm_fn_no_key_raises_on_call():
         with pytest.raises(RuntimeError) as ei:
             fn("prompt")
     assert "RESONOTE_LLM_API_KEY" in str(ei.value)
+
+
+# --- provider quirks: markdown fences + self-contradicting output --------- #
+def test_parse_edits_strips_markdown_fences():
+    # MiniMax (and others) wrap JSON in ```json fences and reject
+    # response_format=json_object, so the content arrives fenced.
+    fenced = '```json\n{"edits":[{"op":"set_style","target":"all","value":"jazz"}]}\n```'
+    eds = _parse_edits(fenced)
+    assert eds[0].op == "set_style" and eds[0].value == "jazz"
+
+
+def test_parse_edits_tolerates_surrounding_prose():
+    noisy = 'Sure! Here you go:\n```json\n{"edits":[{"op":"keep"}]}\n```\nHope that helps.'
+    eds = _parse_edits(noisy)
+    assert eds[0].op == "keep"
+
+
+def test_sanitizer_suppresses_harmony_drops_when_full():
+    arr = _arr("rules")
+    edits = [
+        Edit("set_density", "all", "full", "fuller"),
+        Edit("drop", "harmony", 0.0, "model wanted to thin it anyway"),
+    ]
+    kept = arrangement._sanitize_edits(edits, arr)
+    assert not any(e.op == "drop" and e.target == "harmony" for e in kept)
+    assert any("sanitizer" in (e.reason or "") for e in kept)
+
+
+def test_sanitizer_allows_harmony_drops_when_light():
+    arr = _arr("rules")
+    edits = [
+        Edit("set_density", "all", "light", "simpler"),
+        Edit("drop", "harmony", 0.0, "thin it"),
+    ]
+    kept = arrangement._sanitize_edits(edits, arr)
+    assert any(e.op == "drop" and e.target == "harmony" for e in kept)
+
+
+def test_response_format_only_sent_when_opted_in():
+    from unittest.mock import MagicMock
+    env_json = {"choices": [{"message": {"content": '{"edits":[]}'}}]}
+    fake = MagicMock()
+    fake.__enter__.return_value.read.return_value = json.dumps(env_json).encode("utf-8")
+
+    def _run(extra_env):
+        e = {"RESONOTE_LLM_API_KEY": "k", "RESONOTE_LLM_BASE_URL": "https://e.test/v1"}
+        e.update(extra_env)
+        with patch.dict(arrangement.os.environ, e):
+            with patch("arrangement.urllib.request.urlopen", return_value=fake) as m:
+                make_llm_fn()("p")
+        return json.loads(m.call_args[0][0].data.decode("utf-8"))
+
+    # default: no response_format (MiniMax rejects it with 400)
+    assert "response_format" not in _run({})
+    # opt-in: sent (OpenAI supports it)
+    assert _run({"RESONOTE_LLM_JSON_MODE": "1"})["response_format"] == {"type": "json_object"}
