@@ -174,6 +174,49 @@ def place_harmony(notes) -> List[PlacedNote]:
     return placed
 
 
+def enforce_playability(placed: List[PlacedNote], tempo: float,
+                        max_span: int = 5) -> List[PlacedNote]:
+    """A left hand spans 4-5 frets. Anything wider is unplayable, no matter
+    how the notes are spread in time -- a bass held for two beats while the
+    melody jumps to fret 15 still asks for fingers on fret 2 and fret 15 at
+    the same moment.
+
+    So this is evaluated over *sounding* notes on a sixteenth-note grid, not
+    just simultaneous onsets, and the fix is the subtraction a good tab
+    already is: harmony is decoration, so when a position is out of reach the
+    harmony notes furthest from the hand are dropped. Melody and bass are
+    never dropped.
+    """
+    if not placed or not tempo:
+        return placed
+    step = 60.0 / float(tempo) / 4.0          # one sixteenth note
+    if step <= 0:
+        return placed
+
+    buckets: dict = {}
+    for p in placed:
+        end = p.onset + max(p.duration, 1e-6)
+        for k in range(int(p.onset / step), int(end / step) + 1):
+            buckets.setdefault(k, []).append(p)
+
+    drop = set()
+    for grp in buckets.values():
+        frets = [p.fret for p in grp]
+        while len(grp) > 1 and max(frets) - min(frets) > max_span:
+            victims = [p for p in grp if p.role == "harmony"]
+            if not victims:
+                break                          # melody/bass only: keep as is
+            med = sorted(frets)[len(frets) // 2]
+            victim = max(victims, key=lambda p: abs(p.fret - med))
+            grp.remove(victim)
+            drop.add(id(victim))
+            frets = [p.fret for p in grp]
+
+    if not drop:
+        return placed
+    return [p for p in placed if id(p) not in drop]
+
+
 def _resolve_string_collisions(placed: List[PlacedNote]) -> List[PlacedNote]:
     """No two notes sounding at the same instant may share a string.
 
@@ -237,4 +280,7 @@ def arrange(notes,
     placed += accomp
 
     placed.sort(key=lambda p: (round(p.onset, 4), p.pitch))
-    return _resolve_string_collisions(placed)
+    placed = _resolve_string_collisions(placed)
+
+    tempo = float(getattr(analysis, "tempo", 0) or 0)
+    return enforce_playability(placed, tempo)
