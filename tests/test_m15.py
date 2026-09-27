@@ -69,16 +69,31 @@ class TestMusicXmlExport(unittest.TestCase):
         midi = [0, 2, 4, 5, 7, 9, 11]["CDEFGAB".index(step)] + alter + 12 * (octv + 1)
         self.assertEqual(midi, OPEN_MIDI[5] + 7)
 
-    def test_simultaneous_notes_use_one_voice_per_string(self):
-        # A string cannot sound twice at once, so a chord is not a <chord>
-        # group: it is one note per voice meeting on the same beat. The voice
-        # number IS the string number, stable for the whole part.
+    def test_same_span_shares_a_voice_as_a_chord(self):
+        # two strings struck together and released together are one chord in
+        # one voice -- not two voices, which is what shredded the page layout
         root = _root([pn(0.0, 1.0, 6, 0, "bass"), pn(0.0, 1.0, 1, 3, "melody")])
         notes = [n for n in root.findall(".//note") if n.find("rest") is None]
         self.assertEqual(len(notes), 2)
-        self.assertEqual({n.find("voice").text for n in notes}, {"1", "6"})
-        self.assertFalse([n for n in notes if n.find("chord") is not None])
-        self.assertEqual([n.find("duration").text for n in notes], ["4", "4"])
+        self.assertEqual({n.find("voice").text for n in notes}, {"1"})
+        self.assertIsNone(notes[0].find("chord"))
+        self.assertIsNotNone(notes[1].find("chord"))
+        # <chord> has to be the note's first child, before <pitch>
+        self.assertEqual([c.tag for c in notes[1]][0], "chord")
+
+    def test_diverging_timelines_open_a_second_voice(self):
+        # a bass ringing 2 beats while the melody moves underneath cannot share
+        # a voice (that is what needed <backup>), and must not be cut short
+        placed = [pn(0.0, 2.0, 6, 0, "bass"), pn(1.0, 0.5, 1, 0, "melody")]
+        root = _root(placed, tempo=120.0)
+        self.assertIsNone(root.find(".//backup"))
+        self.assertIsNone(root.find(".//forward"))
+        voiced = {}
+        for n in root.find("./part/measure").findall("note"):
+            voiced.setdefault(n.find("voice").text, []).append(
+                "rest" if n.find("rest") is not None else n.find("pitch"))
+        self.assertEqual(len(voiced), 2, "expected exactly two voices")
+        self.assertTrue(all(v for v in voiced.values()))
 
     def test_ringing_note_needs_no_backup(self):
         # bass rings 2 beats while the melody enters one beat later. Written

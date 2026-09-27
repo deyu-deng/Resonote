@@ -14,10 +14,11 @@ Timing model: notes are quantized to the eighth-note grid the exporter uses;
 a note's duration is how long it rings (capped at the next attack on the same
 string), split across barlines and note values with ties as needed.
 
-Voice model: one MusicXML voice per string, because a string cannot sound two
-notes at once. Simultaneous notes therefore land in different voices meeting on
-the same beat, which is how tab is laid out, and it keeps every voice a linear
-timeline that needs no <backup> to interleave.
+Voice model: the fewest voices that need no <backup>. Notes starting and
+stopping together share a voice as a <chord>; only genuinely independent
+timelines open another voice. One voice per string reads fine but spreads a
+fingerstyle arrangement over far too many pages, and one voice with <backup>
+is refused by alphaTab.
 """
 import math
 from typing import List, Optional, Sequence
@@ -67,8 +68,10 @@ def _pitch_el(parent, midi: int):
 
 
 def _note_el(measure, midi: int, dur: int, string: int, fret: int,
-             voice: str = "1", ties: Sequence[str] = ()):
+             voice: str = "1", ties: Sequence[str] = (), chord: bool = False):
     n = SubElement(measure, "note")
+    if chord:                             # <chord> must be the first child
+        SubElement(n, "chord")
     _pitch_el(n, midi)
     SubElement(n, "duration").text = str(dur)
     for tie in ties:                    # <tie> sits between duration and voice
@@ -188,59 +191,67 @@ def build_musicxml(placed: Sequence[PlacedNote], tempo: float = 120.0,
     SubElement(metro, "beat-unit").text = "quarter"
     SubElement(metro, "per-minute").text = str(int(round(tempo)))
 
-    # One MusicXML voice per string. A string cannot sound twice at once, so
-    # each string is a strictly linear timeline of attacks and silence -- which
-    # is also how tablature is laid out by hand.
+    # Group the notes into as few voices as possible: two notes that start and
+    # stop together share a voice as a <chord>, and a voice only takes its next
+    # note once the previous one has stopped, which keeps every voice a linear
+    # timeline.
     #
-    # The alternative (everything in voice 1, interleaved with <backup>) is
-    # what this exporter used to do, and alphaTab rejects it outright with
-    # "Unsupported forward/backup detected. Cannot fill new beats into already
-    # filled area of voice" on every ringing-note-over-a-new-attack slot. The
-    # point of this file is to be read by other people's engravers, so the
-    # voice layout has to be one they can follow.
-    events_by_string: dict = {}
+    # Both extremes fail, differently. Cramming everything into voice 1 needs
+    # <backup> to interleave a ringing bass with a moving melody, and alphaTab
+    # refuses that ("cannot fill new beats into already filled area of voice").
+    # One voice per string is machine-readable but shreds the page -- six
+    # independent timelines is what made MuseScore lay this arrangement out
+    # over 11 pages where the .gp5 fits in 4. Real guitar engraving sits in
+    # between; fingerstyle lands at 2-4 voices.
+    groups: List[List] = []              # per voice: [[start, dur, [notes]]]
     for (s, length, p) in items:
-        events_by_string.setdefault(p.string, {})[s] = (p, length)
+        for voice in groups:
+            last = voice[-1]
+            if last[0] == s and last[1] == length:
+                last[2].append(p)                 # same span -> same chord
+                break
+            if last[0] + last[1] <= s:
+                voice.append([s, length, [p]])    # this voice is free
+                break
+        else:
+            groups.append([[s, length, [p]]])
 
-    # Split every ringing note into writable note values. A note that crosses
-    # the barline continues as a tie -- cutting it at the barline instead would
-    # re-articulate something that is supposed to sustain.
-    timeline: dict = {}
-    for string, events in events_by_string.items():
+    # Split each into writable note values. A note crossing the barline
+    # continues as a tie rather than being cut -- cutting re-articulates
+    # something that is supposed to sustain.
+    voices: List[List] = []              # per voice: [[start, dur, notes, ties]]
+    for voice in groups:
         segments = []
-        for s in sorted(events):
-            p, length = events[s]
-            pieces = list(_segments(s, length))
-            for i, (g, dur) in enumerate(pieces):
+        for start, dur, notes in voice:
+            pieces = list(_segments(start, dur))
+            for i, (g, d) in enumerate(pieces):
                 ties = (["stop"] if i else []) + \
                        (["start"] if i < len(pieces) - 1 else [])
-                segments.append((g, dur, p, ties))
-        timeline[string] = segments
+                segments.append([g, d, notes, ties])
+        voices.append(segments)
 
-    for mi in range(n_measures):
-        m = m1 if mi == 0 else SubElement(part, "measure", number=str(mi + 1))
-        bar_start = mi * SLOTS_PER_MEASURE
-        bar_end = bar_start + SLOTS_PER_MEASURE
-        active = [st for st in sorted(timeline)
-                  if any(bar_start <= g < bar_end for g, _, _, _ in timeline[st])]
-        if not active:
-            _rest_el(m, SLOTS_PER_MEASURE, voice="1")
-            continue
-        for string in active:
-            # voice number = string number, stable across the whole part.
-            # Numbering per measure instead (1,2,3.. over whichever strings are
-            # active) splits a tie chain across two voices the moment the
-            # active set changes, and readers then place the continuation at
-            # the wrong offset.
-            v = str(string)
+    # created up front so the measures stay in order while voices are written
+    # into them afterwards
+    measures = [m1] + [SubElement(part, "measure", number=str(i + 1))
+                       for i in range(1, n_measures)]
+
+    for vi, segments in enumerate(voices):
+        v = str(vi + 1)
+        for mi, m in enumerate(measures):
+            bar_start = mi * SLOTS_PER_MEASURE
+            bar_end = bar_start + SLOTS_PER_MEASURE
             cursor = 0
-            for g, dur, p, ties in timeline[string]:
+            for g, dur, notes, ties in segments:
                 if not bar_start <= g < bar_end:
                     continue
                 if g - bar_start > cursor:
                     _rest_run(m, bar_start + cursor, g - bar_start - cursor, v)
-                _note_el(m, p.pitch, dur, string, p.fret, voice=v, ties=ties)
+                for j, p in enumerate(notes):
+                    _note_el(m, p.pitch, dur, p.string, p.fret, voice=v,
+                             ties=ties, chord=bool(j))
                 cursor = g - bar_start + dur
+            # every voice fills every measure, so a reader never has to guess
+            # whether a missing voice means silence or a missing file
             if cursor < SLOTS_PER_MEASURE:
                 _rest_run(m, bar_start + cursor, SLOTS_PER_MEASURE - cursor, v)
 
