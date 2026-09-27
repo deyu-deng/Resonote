@@ -5,7 +5,7 @@
 - **输入**：mp3/wav 音频、MIDI、Guitar Pro 3/4/5（.gp3/.gp4/.gp5/.gtp）、ASCII 文本谱（.txt/.tab）
 - **输出**：`.gp5`（编辑）、`.musicxml`（标准交换）、MIDI、WAV 试听、HTML 预览、简易 PDF
 - **核心思路**：好谱子是**减法**——分离出主旋律 + 低音支撑 + 少量和声点缀，而不是复刻整曲音频
-- 测试：**181 个**（`pytest tests/`）
+- 测试：**192 个**（`pytest tests/`）
 
 ---
 
@@ -27,6 +27,7 @@ uv pip install --python .venv/bin/python -r requirements.txt   # 或 pip install
 
 ```bash
 # 音频 → 指弹谱（全链路：分离 → 转写 → 乐理 → 编曲 → 指法 → 导出）
+# --pdf 装了 MuseScore 就走它出出版级排版，否则退回自写 writer（会打印用的是哪个）
 .venv/bin/python main.py "歌.mp3" -o out.gp5 --pdf out.pdf --html out.html \
     --midi out.mid --wav out.wav --musicxml out.musicxml
 
@@ -55,7 +56,7 @@ uv pip install --python .venv/bin/python -r requirements.txt   # 或 pip install
 | L5 | 编曲引擎：角色分配/voicing/**LLM 判断层** | `arrangement.py` | 自研 + LLM（MiniMax，OpenAI 兼容协议） |
 | L6 | 指法：DP 选(弦,品) + 左手指法 + 防同弦冲突 | `arrange.py` | 自研 |
 | L7 | 量化：onset/duration 吸附到节拍网格 | `quantize.py` | 自研 |
-| L8 | 导出 GP5 / MusicXML / MIDI / WAV / PDF | 见下 | **pyguitarpro** (LGPL)、**pretty_midi** (MIT)、alphaTab (MPL-2.0) |
+| L8 | 导出 GP5 / MusicXML / MIDI / WAV / PDF | 见下 | **pyguitarpro** (LGPL)、**pretty_midi** (MIT)、alphaTab (MPL-2.0)、**MuseScore Studio** (GPL，外部进程) |
 | L9 | Web UI（stdlib http.server + 静态页） | `web_server.py` + `web/` | alphaTab 渲染 |
 
 **设计原则：能用成熟开源就不自研。** 自研的只有三块：L4 乐理、L5/L6 编曲与指法（产品差异化核心，无成熟开源方案）、各格式的导出 writer。
@@ -127,7 +128,7 @@ LLM edit: drop harmony = 1.06（为了突出主旋律，和声应点缀少而精
 
 ```bash
 # 1. 全量测试
-.venv/bin/python -m pytest tests/ -q          # 181 个
+.venv/bin/python -m pytest tests/ -q          # 192 个
 
 # 2. 可弹性核验（同时音数 / 品位跨度——人手只有 4-5 品）
 .venv/bin/python experiments/verify_playability.py [产物.gp5]   # 默认取 runs/ 下最新
@@ -141,6 +142,14 @@ node tools/alphatab/verify-score.mjs <产物文件>
 `verify_playability.py`（我们的 import 通路）从不同实现读同一份产物，若音数 /
 同时音数 / 品位跨度不一致，说明其中一方的时间轴或延音链有问题——2026-09-27 就是
 靠这个抓到 MusicXML 的 `<duration>` 与 `<type>` 不自洽（见 §6）。
+
+**4. 排版出来的东西要用人眼看一遍。** 「PDF 生成了」不等于「谱是对的」：MuseScore
+会把结构合法但语义错的输入渲染成空谱表或浮空数字（`staves=2` 现在就是这个状态）。
+出图后转 PNG 看一眼第一页：
+
+```bash
+"/Applications/MuseScore 4.app/Contents/MacOS/mscore" -F -o /tmp/p.png <产物.gp5>
+```
 
 合格的《Melody》基线（分离开启）：1160 音 / 104 小节、同时最多 **4** 音（=拨弦上限）、
 品位跨度平均 **3.8**、超 5 品占比 19%、0 空拍、0 同弦冲突；GP5 与 MusicXML 两条
@@ -179,14 +188,15 @@ quantize.py       L7 量化
 gp_export.py      L8 GP5 导出
 musicxml_export.py L8 MusicXML 导出
 midi_export.py    L8 MIDI/WAV
-tab_pdf.py        L8 简易 PDF（兜底）
+engraving.py      L8 调用 MuseScore 无头排版（出版级 PDF/SVG）
+tab_pdf.py        L8 简易 PDF（没装排版器时的兜底）
 preview.py        ASCII/HTML 预览
 importers.py      GP3/4/5 + ASCII 文本谱导入
 models.py         Note / PlacedNote / STANDARD_TUNING / tuning_labels
 web_server.py     Web 后端
 web/              前端（alphaTab 渲染）
-tests/            181 个测试（test_m1..m15 编号按里程碑）
-experiments/      OMR 原型 / GP7 转换 / 可弹性核验 / 两进程分离流程
+tests/            192 个测试（test_m1..m16 编号按里程碑）
+experiments/      OMR 原型 / GP7 转换 / 可弹性核验 / 节拍对照 bench_beats.py / 两进程分离流程
 tools/alphatab/   alphaTab 独立校验器（node，npm install 后直接用，见 §5）
 samples/          自造示例谱（可提交）
 fixtures/         真实谱子测试集（gitignore，版权原因，仅本地）
@@ -197,24 +207,35 @@ runs/             每次跑出来的产物按日期归档（gitignore），仓�
 
 ## 8. 当前状态与待办
 
-**已完成里程碑**：M1-M15（详见 tests/ 编号）。最近：分离管线全链路跑通（`5079b32`）、MusicXML 导出（`43af5f7`）、GP5→GP7 转换（`d6ca245`）、LLM .env 修复（`a60edce`）、数字对弦渲染修复（`2d5ffce`）。
+**已完成里程碑**：M1-M16（详见 tests/ 编号）。最近：MusicXML 可被排版器读懂（`c98a4ce`）、声部合并（`354a083`）、**MuseScore 出版级排版接入**（`6be5189`）。
+
+**本机已装好的外部工具**（都不经 brew：brew 6.0.9 比 tap/bottle 元数据旧，且 `github.com` 直连不通）：
+
+| 工具 | 位置 | 用途 | 已验证 |
+|---|---|---|---|
+| MuseScore Studio 4.7.5 | `/Applications/MuseScore 4.app/Contents/MacOS/mscore` | 出版级 PDF/SVG/PNG，`--pdf` 自动使用 | ✅ 无头出图可用；`-s` 不存在；退出码不可信 |
+| LilyPond 2.26.0 | `~/.local/bin/lilypond`（实体在 `~/.local/share/lilypond-2.26.0`） | 和弦框页 / Nashville 格谱 | ✅ `--pdf/--svg/--png` 可渲染 StaffGroup+TabStaff；`-b` 不支持 |
+| beat-this 1.1.0 | `.venv`（权重在 `~/.cache/torch/hub/checkpoints/`，来自 cloud.cp.jku.at 非 github） | L4 拍点/重拍 | ⚠️ 只在**合成音频**上测过：速度判对 93.7 vs 93，拍点相位不可靠（见下） |
+| alphaTab 1.8.4 | `tools/alphatab/node_modules` | 独立校验器 | ✅ |
 
 **待办（按建议优先级）**：
 
 | 优先级 | 事项 | 说明 |
 |---|---|---|
-| P0 | 建 eval 集 | 「音频 + 权威谱」配对 2-3 首，量化四条 done（音准/节奏/指法/和声）。没有它一切优化无度量 |
-| P1 | ✅ 分离 | torchaudio 已装，demucs 全链路已通 |
-| P2 | 换真音色渲染 | `brew install fluid-synth`（2.6.1，bottle 秒装）+ GeneralUser GS 音色库，替换 Karplus-Strong |
-| P3 | 出版级排版 | **不要自己画 PDF**。`brew install --cask musescore`（4.7.5，约 200MB）后 `mscore -F -s -o out.pdf` 直接吃我们的 `.gp5`/`.musicxml`；和弦框/Nashville 格这类 MuseScore 弱项再上 LilyPond（39MB，`TabStaff`+`FretBoards`+`ChordGrid` 都是一等公民）。alphaTab 只做屏显与校验，它没有分页，结构上不适合印刷 |
-| P4 | 节拍/和弦检测 | **madmom 不要碰**：PyPI 最后一版 0.16.1（2018），3.10+ 装不上，许可证暧昧。改用 `beat_this`（MIT，官方有 CPU 路径）+ ChordMini（MIT，权重在仓库里）；`all-in-one` 也已停更 |
-| P5 | 转写换代 | basic_pitch 在整曲混音上 F1≈0.43；2026 年可选 MuScriptor（代码 MIT，权重 CC BY-NC）。**先确认可商用性再换**。分离侧 demucs 上游已归档，MSST/BS-RoFormer 或 `mlx-audio-separator`（MLX，M 芯片最快）是后路 |
-| P6 | `place_bass` 选八度参考旋律把位 | 消掉剩余 19% 超 5 品段落 |
-| P7 | 技法记号（H/P/击勾弦） | 纯规则可做：同弦相邻音 + 时序重叠 → hammer-on。alphaTab 的 MusicXML 侧 bend/slide/hammer 都支持 |
-| P8 | 单乐器改走 f0 | 人声/贝斯是近单音的，用 RMVPE/PiENet 的 f0 比把 basic_pitch 硬套在 stem 上准得多 |
-| P9 | OMR 符号识别 | 模板匹配/小模型，节奏在符干+横梁里。**尺寸必须从检测到的谱线间距推导**，现在整套阈值是在大树音乐屋单一来源上调出来的 |
+| **P0** | **建 eval 集（现在是硬阻塞）** | 需要**真实歌曲音频** + 权威谱配对。没有它：beat_this 要不要换、MuScriptor 强多少、和弦检测准不准，全都无法判定。`experiments/bench_beats.py` 已经是一个可跑的打分骨架，配上真实素材就能用 |
+| P1 | ✅ 分离 | demucs 全链路已通（上游已归档，后路见 P5） |
+| P2 | ✅ 出版级排版 | MuseScore 接好，`--pdf` 自动走它；自写 `tab_pdf` 降级为兜底 |
+| P3 | 五线谱+六线谱同页 | `musicxml_export.build_musicxml(staves=2)` 编码已写但**MuseScore 渲成空五线谱 + 浮空数字**。多谱表 MusicXML 要用「写完 staff 1 → 整小节 `<backup>` → 写 staff 2」的布局，是另一件活 |
+| P4 | 换真音色试听 | `fluid-synth`（brew 装不了，走 bottle 直链或官方 pkg）+ GeneralUser GS 音色库，替换 Karplus-Strong |
+| P5 | L3/L4 换代 | 转写：MuScriptor 0.3.0 在 PyPI（权重 CC BY-NC）；分离：`msst` 0.1.0 在 PyPI，或 `mlx-audio-separator` 走 MLX。和弦：ChordMini **不在 PyPI**（要 git 装）。**全部等 P0 做完再动** |
+| P6 | `place_bass` 选八度参考旋律把位 | 消掉剩余 17% 超 5 品段落 |
+| P7 | 技法记号（H/P/击勾弦） | 纯规则可做；alphaTab 的 MusicXML 侧 bend/slide/hammer 都支持 |
+| P8 | 单乐器改走 f0 | `rmvpe-onnx` 0.2.3 在 PyPI（MIT）。人声/贝斯近单音，f0 比把 basic_pitch 套在 stem 上准得多 |
 
-**未解决**：整曲混音转写 F1≈0.43（clean 单乐器才好；2026 的客观基线是流行多轨 onset F1 仅 ~29%，所以「全自动直出」的天花板由 L3 决定）；Web 无鉴权；Python 3.11 本身正在变成约束（librosa 1.0 与 abjad 3.31 都要 ≥3.12）。
+**已核实为死路 / 不要碰**：madmom（PyPI 停在 2018，3.10+ 装不上，许可证暧昧）、YourMT3+（`yourmt3-plus` 在 PyPI 404，上游仓库 2024-11 冻结）、MR-MT3（无官方实现）、TuxGuitar（无头 CLI 不存在，PDF 只在 GUI 里）、alphaTab 做印刷（**没有分页**，官方文档自己写着 "no strict print-page display yet"）、abjad 3.31 与 librosa 1.0（都要 Python ≥3.12，我们是 3.11）。
+
+**未解决**：整曲混音转写 F1≈0.43（2026 年流行多轨的客观基线只有 onset F1≈29%，所以天花板在 L3 不在编曲）；Web 无鉴权；小节线锚点没有依据——`analysis.detect_beats` 从已转写音符的 onset 间隔反推网格，因此把第一小节钉在**第一个音**上，它没有"重拍/downbeat"概念，指弹谱的小节线可能整体错位（这正是 P0 要解决的第一个问题）。
+
 
 ---
 
