@@ -51,15 +51,21 @@ try {
   process.exit(1);
 }
 
-/** alphaTab stores a beat's value as a note divisor: 4 = quarter, 8 = eighth,
- *  and it also uses 256 for the zero-length filler beats it inserts where a
- *  voice starts on a tie. Quarters = 4 / divisor, so no lookup table (a table
- *  silently rounding an unknown divisor up to a whole eighth shifted a whole
- *  bar's notes onto the next barline). */
+/** alphaTab stores a beat's value as a note divisor: 4 = quarter, 8 = eighth.
+ *  Quarters = 4 / divisor, with no lookup table -- a table that silently
+ *  rounds an unknown divisor up to a whole eighth shifted a whole bar's notes
+ *  onto the next barline.
+ *
+ *  Exception: alphaTab marks a voice that opens on a tie with a zero-length
+ *  filler beat (divisor 256) and no notes. It is a marker, not music time;
+ *  counting it offsets everything after it by 1/64 of a beat, which was enough
+ *  to regroup simultaneous attacks and report a different fret span for the
+ *  same arrangement read from .gp5 and from .musicxml. */
 function beatQuarters(beat, warnings) {
-  const base = 4 / (beat.duration || 8);
-  let q = base;
-  for (let d = 1; d <= (beat.dots || 0); d++) q += base / 2 ** d;
+  const divisor = beat.duration || 8;
+  if (!beat.notes?.length && divisor >= 128) return 0;
+  let q = 4 / divisor;
+  for (let d = 1; d <= (beat.dots || 0); d++) q += (4 / divisor) / 2 ** d;
   if (beat.tupletNumerator && beat.tupletDenominator) {
     q *= beat.tupletDenominator / beat.tupletNumerator;
   } else if (beat.tupletNumerator) {
