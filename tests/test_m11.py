@@ -103,3 +103,49 @@ class TestTabPdf(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFretsSitOnTheirStringLine(unittest.TestCase):
+    """A tab number must be centred ON its string line.
+
+    PDF text is placed at the baseline, so the baseline has to sit half a
+    cap-height below the line. It used to sit 3pt ABOVE it, which floated
+    every digit into the gap between two strings -- unreadable.
+    """
+
+    @staticmethod
+    def _content(placed):
+        fd, path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        try:
+            write_tab_pdf(placed, path, tempo=120.0)
+            raw = open(path, "rb").read()
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+        streams = re.findall(rb"stream\n(.*?)\nendstream", raw, re.S)
+        return streams[0].decode("latin-1")
+
+    def test_digit_baselines_sit_below_their_line(self):
+        placed = [PlacedNote(pitch=64, onset=0.5 * i, duration=0.4,
+                             string=s, fret=3, finger=0, pluck="", role="m")
+                  for i, s in enumerate((1, 2, 3, 4, 5, 6))]
+        cs = self._content(placed)
+
+        lines = [float(m.group(2)) for m in re.finditer(
+            r"[\d.]+ w ([\d.]+) ([\d.]+) m ([\d.]+) ([\d.]+) l S", cs)
+            if m.group(2) == m.group(4)]                    # horizontal lines
+        self.assertTrue(lines, "no staff lines found")
+
+        texts = [(float(m.group(1)), float(m.group(2)), m.group(3))
+                 for m in re.finditer(
+            r"BT \S+ [\d.]+ Tf ([\d.]+) ([\d.]+) Td \((\d+)\) Tj ET", cs)]
+        digits = [(x, y) for (x, y, s) in texts if s == "3"]
+        self.assertTrue(digits, "no fret numbers found")
+
+        for x, y in digits:
+            near = min(lines, key=lambda ly: abs(ly - y))
+            self.assertAlmostEqual(y, near - 8 * 0.718 / 2.0, places=1,
+                                   msg=f"digit at {x},{y} is not centred on a line")
+            self.assertLess(y, near,
+                            "baseline must be BELOW the line, not above it")

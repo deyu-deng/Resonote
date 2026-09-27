@@ -24,6 +24,12 @@ SLOTS_PER_MEASURE = 8
 A4 = (595.0, 842.0)
 LETTER = (612.0, 792.0)
 
+# PDF text is placed at the BASELINE, so a glyph is drawn ABOVE the y you
+# give. To centre a digit on its string line the baseline must sit half a
+# cap-height BELOW that line: Helvetica cap height is 0.718 em, so at 8 pt
+# that is 8 * 0.718 / 2 = 2.87 pt.
+BASELINE_SHIFT = 8 * 0.718 / 2.0
+
 _HELV = "/Helvetica"
 _HELV_B = "/Helvetica-Bold"
 
@@ -227,7 +233,8 @@ def write_tab_pdf(placed: Sequence[PlacedNote],
             pdf.line(x0, ly, x0 + width, ly, 0.5)
         # string labels
         for i, s in enumerate(_ORDER):
-            pdf.text(margin + 4, top - i * line_gap + 3.0, labels[s], size=8)
+            pdf.text(margin + 4, top - i * line_gap - BASELINE_SHIFT, labels[s],
+                     size=8)
         # bar lines
         for m in range(n + 1):
             bx = x0 + m * measure_w
@@ -272,7 +279,10 @@ def write_tab_pdf(placed: Sequence[PlacedNote],
         if group:
             _beam(pdf, group, top + 6.0 + rhythm_h)
 
-        # frets
+        # frets -- the PDF text origin is the BASELINE, so it sits half a
+        # cap-height below the string line: the line then passes through the
+        # middle of the digit, as every published tab does. A positive offset
+        # here made the digits float in the gap above their line.
         for m in range(n):
             base = first + m
             for slot in range(slots_per_measure):
@@ -283,7 +293,8 @@ def write_tab_pdf(placed: Sequence[PlacedNote],
                 cx = x0 + m * measure_w + slot * slot_width + slot_width / 2.0
                 for s, fret in hit.items():
                     row = _ORDER.index(s)
-                    pdf.text(cx, top - row * line_gap + 3.0, str(fret),
+                    ly = top - row * line_gap
+                    pdf.text(cx, ly - BASELINE_SHIFT, str(fret),
                              size=8, align="center")
         return bottom
 
