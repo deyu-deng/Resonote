@@ -67,12 +67,24 @@ def _pitch_el(parent, midi: int):
     return p
 
 
+def _staves_el(n, staves: int):
+    """Which staff(s) this note appears on. <staff> sits after the dots and
+    before <notations>; with two staves the same note is written once and
+    drawn on both, which is how a score shows staff and tab together."""
+    for s in range(1, staves + 1):
+        SubElement(n, "staff").text = str(s)
+
+
 def _note_el(measure, midi: int, dur: int, string: int, fret: int,
-             voice: str = "1", ties: Sequence[str] = (), chord: bool = False):
+             voice: str = "1", ties: Sequence[str] = (), chord: bool = False,
+             staves: int = 1):
     n = SubElement(measure, "note")
     if chord:                             # <chord> must be the first child
         SubElement(n, "chord")
-    _pitch_el(n, midi)
+    # guitar is written an octave above its sounding pitch so the treble
+    # clef + clef-octave-change -1 reads the way every printed score does;
+    # the tab staff ignores <pitch> and uses <fret>/<string> anyway
+    _pitch_el(n, midi + (12 if staves == 2 else 0))
     SubElement(n, "duration").text = str(dur)
     for tie in ties:                    # <tie> sits between duration and voice
         SubElement(n, "tie", type=tie)
@@ -81,6 +93,7 @@ def _note_el(measure, midi: int, dur: int, string: int, fret: int,
     SubElement(n, "type").text = tname
     for _ in range(dots):
         SubElement(n, "dot")
+    _staves_el(n, staves)
     notations = SubElement(n, "notations")
     for tie in ties:                    # <tied> is what the tab staff draws
         SubElement(notations, "tied", type=tie)
@@ -90,7 +103,7 @@ def _note_el(measure, midi: int, dur: int, string: int, fret: int,
     return n
 
 
-def _rest_el(measure, dur: int, voice: str = "1"):
+def _rest_el(measure, dur: int, voice: str = "1", staves: int = 1):
     n = SubElement(measure, "note")
     SubElement(n, "rest")
     SubElement(n, "duration").text = str(dur)
@@ -99,14 +112,15 @@ def _rest_el(measure, dur: int, voice: str = "1"):
     SubElement(n, "type").text = tname
     for _ in range(dots):
         SubElement(n, "dot")
+    _staves_el(n, staves)
     return n
 
 
-def _rest_run(measure, start_slot: int, slots: int, voice: str):
+def _rest_run(measure, start_slot: int, slots: int, voice: str, staves: int = 1):
     """Silence, split the same way notes are — a 5-eighth gap is not one rest
     any more than it is one note."""
     for g, dur in _segments(start_slot, slots):
-        _rest_el(measure, dur, voice=voice)
+        _rest_el(measure, dur, voice=voice, staves=staves)
 
 
 def _tuning_name(midi: int):
@@ -118,7 +132,22 @@ def _tuning_name(midi: int):
 
 def build_musicxml(placed: Sequence[PlacedNote], tempo: float = 120.0,
                    title: str = "Resonote",
-                   tuning: Optional[Sequence[int]] = None) -> str:
+                   tuning: Optional[Sequence[int]] = None,
+                   staves: int = 1) -> str:
+    """Render an arrangement as MusicXML.
+
+    ``staves=1`` (default) is tablature, which MuseScore renders correctly.
+
+    ``staves=2`` asks for standard notation above the tab and is NOT working
+    yet: MuseScore 4.7.5 imports it as an empty five-line staff with the fret
+    numbers floating above the tab lines. Multi-staff MusicXML appears to want
+    each staff written as a full pass through the measure separated by a
+    measure-length <backup>, which is a different layout job from the voice
+    grouping below. Kept here because the encoding is already correct for
+    alphaTab; do not ship it as an engraving option until it is verified.
+    """
+    if staves not in (1, 2):
+        raise ValueError(f"staves must be 1 (tab) or 2 (staff + tab), got {staves}")
     tuning = list(tuning) if tuning else list(STANDARD_TUNING)
     if len(tuning) != 6:
         raise ValueError(f"tuning must list 6 pitches, got {len(tuning)}")
@@ -162,7 +191,7 @@ def build_musicxml(placed: Sequence[PlacedNote], tempo: float = 120.0,
 
     part = SubElement(score, "part", id="P1")
 
-    # measure 1 attributes: divisions, key, time, TAB clef, string tunings
+    # measure 1 attributes: divisions, key, time, staves, clefs, string tunings
     m1 = SubElement(part, "measure", number="1")
     attrs = SubElement(m1, "attributes")
     SubElement(attrs, "divisions").text = str(DIVISIONS)
@@ -171,10 +200,31 @@ def build_musicxml(placed: Sequence[PlacedNote], tempo: float = 120.0,
     time = SubElement(attrs, "time")
     SubElement(time, "beats").text = "4"
     SubElement(time, "beat-type").text = "4"
-    clef = SubElement(attrs, "clef")
-    SubElement(clef, "sign").text = "TAB"
-    SubElement(clef, "line").text = "5"
-    details = SubElement(attrs, "staff-details")
+    if staves == 2:
+        # the published form of a fingerstyle score: pitch on top so the rhythm
+        # and voicing are readable, tab underneath so the fingers are. One
+        # voice serves both staves; each note says which staves to draw on.
+        SubElement(attrs, "staves").text = str(staves)
+        std = SubElement(attrs, "clef", number="1")
+        SubElement(std, "sign").text = "G"
+        SubElement(std, "line").text = "2"
+        # guitar sounds an octave below the treble clef; the note is written
+        # without that offset, so the clef has to say it
+        SubElement(std, "clef-octave-change").text = "-1"
+        tab = SubElement(attrs, "clef", number="2")
+        SubElement(tab, "sign").text = "TAB"
+        SubElement(tab, "line").text = "5"
+    else:
+        clef = SubElement(attrs, "clef")
+        SubElement(clef, "sign").text = "TAB"
+        SubElement(clef, "line").text = "5"
+    if staves == 2:
+        # staff 1 has to be declared as an ordinary five-line staff or a reader
+        # inherits the tab setup below it and draws fret numbers on both
+        std_details = SubElement(attrs, "staff-details", number="1")
+        SubElement(std_details, "staff-lines").text = "5"
+    details = SubElement(attrs, "staff-details",
+                         **({"number": "2"} if staves == 2 else {}))
     SubElement(details, "staff-lines").text = "6"
     # MusicXML staff line 1 = LOWEST string -> our string 6
     for line in range(1, 7):
@@ -245,15 +295,17 @@ def build_musicxml(placed: Sequence[PlacedNote], tempo: float = 120.0,
                 if not bar_start <= g < bar_end:
                     continue
                 if g - bar_start > cursor:
-                    _rest_run(m, bar_start + cursor, g - bar_start - cursor, v)
+                    _rest_run(m, bar_start + cursor, g - bar_start - cursor,
+                              v, staves)
                 for j, p in enumerate(notes):
                     _note_el(m, p.pitch, dur, p.string, p.fret, voice=v,
-                             ties=ties, chord=bool(j))
+                             ties=ties, chord=bool(j), staves=staves)
                 cursor = g - bar_start + dur
             # every voice fills every measure, so a reader never has to guess
             # whether a missing voice means silence or a missing file
             if cursor < SLOTS_PER_MEASURE:
-                _rest_run(m, bar_start + cursor, SLOTS_PER_MEASURE - cursor, v)
+                _rest_run(m, bar_start + cursor, SLOTS_PER_MEASURE - cursor,
+                          v, staves)
 
     rough = tostring(score, encoding="unicode")
     pretty = minidom.parseString(rough).toprettyxml(indent="  ")
@@ -266,8 +318,10 @@ def build_musicxml(placed: Sequence[PlacedNote], tempo: float = 120.0,
 
 def write_musicxml(placed, out_path, tempo: float = 120.0,
                    title: str = "Resonote",
-                   tuning: Optional[Sequence[int]] = None) -> str:
-    xml = build_musicxml(placed, tempo=tempo, title=title, tuning=tuning)
+                   tuning: Optional[Sequence[int]] = None,
+                   staves: int = 1) -> str:
+    xml = build_musicxml(placed, tempo=tempo, title=title, tuning=tuning,
+                         staves=staves)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(xml)
     return out_path

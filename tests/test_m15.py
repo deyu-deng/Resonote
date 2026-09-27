@@ -42,7 +42,7 @@ class TestMusicXmlExport(unittest.TestCase):
     def test_tab_clef_and_tunings(self):
         # DADGAD: line 1 = LOWEST string (D2), line 6 = highest (D4)
         tuning = [62, 57, 55, 50, 45, 38]
-        root = _root([pn(0.0, 1.0, 1, 0)], tuning=tuning)
+        root = _root([pn(0.0, 1.0, 1, 0)], tuning=tuning, staves=1)
         attrs = root.find("./part/measure/attributes")
         self.assertEqual(attrs.find("clef/sign").text, "TAB")
         self.assertEqual(attrs.find("staff-details/staff-lines").text, "6")
@@ -52,6 +52,41 @@ class TestMusicXmlExport(unittest.TestCase):
         self.assertEqual(lines[1], ("D", "2"))       # lowest string first
         self.assertEqual(lines[6], ("D", "4"))
 
+    def test_staff_and_tab_together(self):
+        # the published form: five-line staff over tablature, one voice serving
+        # both, each note saying which staves to draw on
+        root = _root([pn(0.0, 1.0, 1, 0)], staves=2)
+        attrs = root.find("./part/measure/attributes")
+        self.assertEqual(attrs.find("staves").text, "2")
+        self.assertEqual({c.get("number"): c.find("sign").text
+                          for c in attrs.findall("clef")},
+                         {"1": "G", "2": "TAB"})
+        self.assertEqual(
+            attrs.find('clef[@number="1"]/clef-octave-change').text, "-1")
+        self.assertEqual(
+            attrs.find('staff-details[@number="2"]/staff-lines').text, "6")
+        self.assertEqual([s.text for s in root.find(".//note").findall("staff")],
+                         ["1", "2"])
+
+    def test_written_pitch_follows_the_guitar_octave_convention(self):
+        # A printed guitar score writes middle C an octave up and lets
+        # clef-octave-change=-1 put it back, while tab ignores <pitch> and
+        # reads <fret>/<string>. So the same note carries a different number
+        # per mode -- get it wrong and the staff is silently an octave off.
+        def midi_of(root):
+            p = root.find(".//note/pitch")
+            alter = p.find("alter")
+            return ([0, 2, 4, 5, 7, 9, 11]["CDEFGAB".index(p.find("step").text)]
+                    + (int(alter.text) if alter is not None else 0)
+                    + 12 * (int(p.find("octave").text) + 1))
+        placed = [pn(0.0, 1.0, 5, 7)]                 # sounding MIDI 52
+        self.assertEqual(midi_of(_root(placed, staves=1)), 52)
+        self.assertEqual(midi_of(_root(placed, staves=2)), 64)
+
+    def test_rejects_bad_staves(self):
+        with self.assertRaises(ValueError):
+            _root([pn(0.0, 1.0, 1, 0)], staves=3)
+
     def test_fret_comes_before_string(self):
         root = _root([pn(0.0, 1.0, 6, 3)])
         tech = root.find(".//technical")
@@ -60,7 +95,7 @@ class TestMusicXmlExport(unittest.TestCase):
         self.assertEqual(tech.find("string").text, "6")
 
     def test_pitch_matches_string_and_fret(self):
-        root = _root([pn(0.0, 1.0, 5, 7)])
+        root = _root([pn(0.0, 1.0, 5, 7)], staves=1)
         pitch = root.find(".//note/pitch")
         step = pitch.find("step").text
         alter_el = pitch.find("alter")

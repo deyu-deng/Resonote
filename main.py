@@ -235,12 +235,20 @@ def main():
         print(f"\nWrote preview {args.html}")
 
     if args.pdf:
-        if not (args.input and is_tab_file(args.input)):
+        # A real engraver wins when one is installed: it reads the .gp5 we just
+        # wrote and does the spacing and page breaks we cannot.
+        from engraving import engrave, engraver_version, find_engraver
+        eng = find_engraver()
+        backend = engraver_version(eng) if eng and os.path.exists(args.out) \
+            and engrave(args.out, args.pdf) else None
+        if not backend and not (args.input and is_tab_file(args.input)):
             from tab_pdf import write_tab_pdf
             write_tab_pdf(res.placed, args.pdf, tempo=res.tempo,
                           title=os.path.splitext(os.path.basename(args.pdf))[0])
         # import mode: run_import already wrote it, with the source tuning
-        print(f"\nWrote tablature PDF {args.pdf}")
+        print(f"\nWrote tablature PDF {args.pdf}"
+              + (f"  (engraved by {backend})" if backend
+                 else "  (built-in writer; install MuseScore for print quality)"))
     if args.midi:
         print(f"\nWrote preview MIDI {args.midi}")
     if args.musicxml:
