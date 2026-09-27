@@ -21,3 +21,8 @@ web/results/
 
 # WorkBuddy internal (agent memory/state) — not product source
 .workbuddy/
+
+# Local test fixtures — real tabs are copyrighted, never commit them to the
+# public repo. This directory is the multi-source eval set; it lives only on
+# machines that have the files.
+fixtures/
