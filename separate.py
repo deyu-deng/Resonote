@@ -228,9 +228,15 @@ class DemucsSeparator(Separator):
 # --------------------------------------------------------------------------- #
 
 def demucs_available() -> bool:
-    """True if demucs + torch can be imported."""
+    """True if demucs + torch + torchaudio can be imported.
+
+    torchaudio belongs in this check too: demucs imports it lazily inside
+    ``separate()``, so without it the CLI would announce "separation=demucs"
+    and then die on a ModuleNotFoundError instead of falling back.
+    """
     try:
         import torch  # noqa: F401
+        import torchaudio  # noqa: F401
         import demucs  # noqa: F401
         return True
     except ImportError:

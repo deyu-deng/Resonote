@@ -13,13 +13,12 @@ Helvetica cannot render them).
 """
 
 import math
-from typing import List, Sequence
+from typing import Dict, List, Optional, Sequence
 
-from models import PlacedNote
+from models import PlacedNote, tuning_labels
 
 # display order: high E on top, low E at the bottom
 _ORDER = [1, 2, 3, 4, 5, 6]
-_LABELS = {1: "e", 2: "B", 3: "G", 4: "D", 5: "A", 6: "E"}
 SLOTS_PER_MEASURE = 8
 
 A4 = (595.0, 842.0)
@@ -157,8 +156,15 @@ def write_tab_pdf(placed: Sequence[PlacedNote],
                   slots_per_measure: int = SLOTS_PER_MEASURE,
                   slot_width: float = 11.0,
                   page_size: str = "A4",
-                  landscape: bool = True) -> str:
-    """Render `placed` as a printable guitar-tablature PDF."""
+                  landscape: bool = True,
+                  tuning: Optional[Sequence[int]] = None,
+                  subtitle: str = "") -> str:
+    """Render `placed` as a printable guitar-tablature PDF.
+
+    ``tuning`` (six MIDI pitches, string 1 first) only changes the printed
+    string labels -- the frets themselves come from the notes. Pass it when the
+    tab is not in standard, or the PDF will label a DADGAD tab as EADGBE.
+    """
     pw, ph = A4 if page_size.upper() == "A4" else LETTER
     if landscape:
         pw, ph = ph, pw
@@ -183,7 +189,14 @@ def write_tab_pdf(placed: Sequence[PlacedNote],
     head = _ascii(title)
     pdf.text(margin, y - 12, head, size=14, bold=True)
     pdf.text(pw - margin, y - 12, f"{tempo:.0f} BPM", size=10, align="right")
-    y -= 26
+    y -= 22
+    if subtitle:
+        pdf.text(margin, y, _ascii(subtitle), size=9)
+        y -= 12
+    else:
+        y -= 4
+
+    labels = tuning_labels(tuning)
 
     items, total = _grid(placed, tempo, slots_per_measure)
     n_measures = total // slots_per_measure if placed else 0
@@ -204,7 +217,7 @@ def write_tab_pdf(placed: Sequence[PlacedNote],
             pdf.line(x0, ly, x0 + width, ly, 0.5)
         # string labels
         for i, s in enumerate(_ORDER):
-            pdf.text(margin + 4, top - i * line_gap + 3.0, _LABELS[s], size=8)
+            pdf.text(margin + 4, top - i * line_gap + 3.0, labels[s], size=8)
         # bar lines
         for m in range(n + 1):
             bx = x0 + m * measure_w

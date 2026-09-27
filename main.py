@@ -23,6 +23,11 @@ Usage
   # dump intermediate stems + notes for debugging:
   python main.py song.mp3 --dump-intermediate _debug -o song.gp5
 
+  # re-export a tab you already have (bought / downloaded) as your own PDF+GP5,
+  # keeping the fingering the author chose:
+  python main.py song.gp5 -o song.mine.gp5 --pdf song.pdf
+  python main.py song.txt -o song.gp5 --pdf song.pdf --tempo 96
+
 The whole pipeline (transcribe -> analyze -> quantize -> arrange -> export)
 is orchestrated by :mod:`pipeline`. This file only does argument parsing,
 friendly console output, and file I/O.
@@ -93,7 +98,10 @@ def main():
         description="Resonote: turn a melody into a fingerstyle guitar .gp5 tab")
     ap.add_argument("input", nargs="?", help="audio (.mp3/.wav) or MIDI (.mid/.midi)")
     ap.add_argument("-o", "--out", default="out.gp5", help="output .gp5 path")
-    ap.add_argument("-t", "--tempo", type=int, default=120, help="BPM for the tab")
+    ap.add_argument("-t", "--tempo", type=int, default=None,
+                    help="BPM. Audio path: the tempo is detected, this is "
+                         "ignored. Import path: overrides the file's tempo "
+                         "(a text tab has none, so it defaults to 120)")
     ap.add_argument("--html", default=None, help="also write a standalone HTML preview")
     ap.add_argument("--pdf", default=None,
                     help="also write a printable tablature PDF (vector, no deps)")
@@ -128,7 +136,9 @@ def main():
     elif is_midi(args.input):
         print(f"[midi] reading {args.input}")
     elif is_tab_file(args.input):
-        print(f"[import] reading existing tab {args.input} "
+        kind = ("Guitar Pro" if str(args.input).lower().endswith(
+            (".gp5", ".gp4", ".gp3", ".gtp")) else "ASCII text tab")
+        print(f"[import] reading {kind} {args.input} "
               f"(fingering preserved, no re-arrangement)")
     else:
         sep_label = "off" if args.no_separate else ("demucs" if demucs_available() else "passthrough")
@@ -158,6 +168,8 @@ def main():
             midi_path=args.midi,
             wav_path=args.wav,
             html_path=args.html,
+            pdf_path=args.pdf,
+            tempo=args.tempo,
         )
     else:
         res = run(
@@ -211,9 +223,11 @@ def main():
         print(f"\nWrote preview {args.html}")
 
     if args.pdf:
-        from tab_pdf import write_tab_pdf
-        write_tab_pdf(res.placed, args.pdf, tempo=res.tempo,
-                      title=os.path.splitext(os.path.basename(args.pdf))[0])
+        if not (args.input and is_tab_file(args.input)):
+            from tab_pdf import write_tab_pdf
+            write_tab_pdf(res.placed, args.pdf, tempo=res.tempo,
+                          title=os.path.splitext(os.path.basename(args.pdf))[0])
+        # import mode: run_import already wrote it, with the source tuning
         print(f"\nWrote tablature PDF {args.pdf}")
     if args.midi:
         print(f"\nWrote preview MIDI {args.midi}")

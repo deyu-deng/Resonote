@@ -9,11 +9,12 @@ useless for checking whether the arrangement is actually playable.
 
 from typing import List, Optional, Sequence
 
-from models import PlacedNote
+from models import PlacedNote, tuning_labels
 
-# display order: low string (6) at the bottom
-_LABELS = {6: "E", 5: "A", 4: "D", 3: "G", 2: "B", 1: "e"}
-_ORDER = [6, 5, 4, 3, 2, 1]          # top to bottom
+# Display order: high E on top, low E at the bottom -- the same layout as the
+# PDF, Guitar Pro and essentially every tab on the internet. (It used to be
+# reversed here, which meant the terminal preview and the PDF disagreed.)
+_ORDER = [1, 2, 3, 4, 5, 6]          # top to bottom
 SLOTS_PER_MEASURE = 8                # 8 eighths == 4/4, same as the exporter
 # 3 characters per eighth-note column: frets go up to 19, so a 2-wide column
 # makes "112" ambiguous (11|2 or 1|12). One extra char removes the guesswork.
@@ -43,15 +44,20 @@ def _grid(placed: Sequence[PlacedNote], tempo: float):
 def ascii_tab(placed: Sequence[PlacedNote],
               tempo: float = 120.0,
               slots_per_measure: int = SLOTS_PER_MEASURE,
-              measures_per_line: int = 4) -> str:
+              measures_per_line: int = 4,
+              tuning: Optional[Sequence[int]] = None) -> str:
     """Render a time-aligned ASCII tablature with bar lines.
 
     A fret number marks a plucked note; ``-`` is silence (in practice the
     previous chord keeps ringing, see ``gp_export``). Blocks wrap every
     ``measures_per_line`` measures so the tab stays readable in a terminal.
+
+    ``tuning`` only changes the six letters down the left edge; pass it for a
+    non-standard tab or the preview will label a DADGAD tab as EADGBE.
     """
     if not placed:
         return ""
+    labels = tuning_labels(tuning)
 
     items, total = _grid(placed, tempo)
     if total == 0:
@@ -77,7 +83,7 @@ def ascii_tab(placed: Sequence[PlacedNote],
         last = min(first + measures_per_line, n_measures)
         measures = list(range(first, last))
 
-        # bar-number ruler, aligned under the "E|" prefix
+        # bar-number ruler, aligned under the "e|" prefix
         ruler = "  " + "".join(
             f"{m + 1:<{slots_per_measure * SLOT_WIDTH + 1}}" for m in measures)
         blocks.append(ruler.rstrip())
@@ -85,7 +91,7 @@ def ascii_tab(placed: Sequence[PlacedNote],
         for s in _ORDER:
             row = cells[s]
             body = "|".join(measure_text(row, m) for m in measures)
-            blocks.append(f"{_LABELS[s]}|{body}|")
+            blocks.append(f"{labels[s]}|{body}|")
         blocks.append("")
 
     return "\n".join(blocks).rstrip() + "\n"
@@ -95,12 +101,13 @@ def html_preview_string(placed: Sequence[PlacedNote],
                         title: str = "Resonote preview",
                         tempo: Optional[float] = None,
                         subtitle: str = "",
-                        audio_src: Optional[str] = None) -> str:
+                        audio_src: Optional[str] = None,
+                        tuning: Optional[Sequence[int]] = None) -> str:
     """Build the standalone HTML preview as a string (no file I/O).
 
     Used by the web layer so it can embed / serve the markup directly.
     """
-    tab = ascii_tab(placed, tempo=tempo or 120.0)
+    tab = ascii_tab(placed, tempo=tempo or 120.0, tuning=tuning)
     tab = tab.replace("&", "&amp;").replace("<", "&lt;")
     rows = "".join(
         f"<tr><td>{p.pitch}</td><td>str {p.string}</td>"

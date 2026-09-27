@@ -26,9 +26,9 @@ exactly 8 eighth-note slots.
 """
 
 import guitarpro as gp
-from typing import List
+from typing import List, Optional, Sequence
 
-from models import Note, PlacedNote
+from models import Note, PlacedNote, STANDARD_TUNING
 
 QUARTER = gp.Duration.quarterTime            # 960 ticks
 GRID = QUARTER // 2                          # 480 ticks == one eighth note
@@ -109,6 +109,7 @@ def _build_beats(items, total: int):
         slot[g] = first
 
     beats = []
+    started: set = set()        # notes already plucked once
     s = 0
     while s < total:
         cur = slot[s]
@@ -118,7 +119,14 @@ def _build_beats(items, total: int):
                and (e % SLOTS_PER_MEASURE != 0)):
             e += 1
         seg_len = e - s
-        attacks = {id(p) for (sp, lp, p) in items if sp == s}
+        # A note is plucked once; every later beat it appears in is a tie.
+        # Anything not yet started is an attack -- including a note that only
+        # got carried into leading silence. Keying this off "does its own start
+        # slot equal this beat's slot" was wrong: a carried note starts later
+        # than the beat, so it was written as a tie with nothing before it, and
+        # the reader threw it away (silently dropping the first note).
+        attacks = {id(p) for p in cur if id(p) not in started}
+        started |= attacks
         for plen in _split_powers(seg_len):
             beats.append((s, plen, cur, attacks))
             attacks = set()          # only the first sub-beat attacks
@@ -157,22 +165,40 @@ def _emit_beat(voice, sounding, attacks, plen: int) -> None:
 
 
 def to_gp5(placed, out_path, tempo: float = 120, title: str = "Resonote",
-           anchor: float = 0.0):
-    """Write placed notes to a .gp5 file. Returns out_path."""
+           anchor: Optional[float] = None, tuning: Optional[Sequence[int]] = None):
+    """Write placed notes to a .gp5 file. Returns out_path.
+
+    ``anchor`` is the timeline position of grid slot 0, in seconds. Leave it
+    ``None`` (the usual case) to start the grid at the first note -- that keeps
+    an imported tab from gaining a bar of silence in front. Pass a beat time
+    when you want the grid to line up with a detected beat grid instead; the
+    anchor is still clamped so it never lands *after* the first note.
+
+    ``tuning`` is six MIDI pitches for string 1..6 (highest first). Pass the
+    source tuning when re-exporting an imported tab, or the file will claim
+    standard tuning and every pitch will come out wrong.
+    """
     song = gp.Song()
     song.title = title
     song.tempo = tempo
 
+    strings = list(tuning) if tuning else list(STANDARD_TUNING)
+    if len(strings) != 6:
+        raise ValueError(f"tuning must list 6 pitches, got {len(strings)}")
+
     track = song.tracks[0]
     track.name = "Resonote Guitar"
+    # an imported tab has to keep its own tuning: writing a DADGAD tab with
+    # standard tuning would shift every pitch
     track.strings = [gp.GuitarString(n, v) for n, v in
-                     [(1, 64), (2, 59), (3, 55), (4, 50), (5, 45), (6, 40)]]
+                     zip(range(1, 7), strings)]
 
     ticks_per_sec = QUARTER * tempo / 60.0
     # Start the grid at the first sounding note so the tab has no leading
     # silence (an empty leading beat cannot be read back, see _build_beats).
     if placed:
-        anchor = min(anchor, min(p.onset for p in placed))
+        first = min(p.onset for p in placed)
+        anchor = first if anchor is None else min(anchor, first)
     items = _to_grid(placed, ticks_per_sec, anchor)
 
     total = max((s + l for s, l, _ in items), default=0)

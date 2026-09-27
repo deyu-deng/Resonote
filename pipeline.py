@@ -66,7 +66,7 @@ def _write_to_temp(write_fn) -> bytes:
 
 def run(input_path: Optional[str] = None, *,
         demo: bool = False,
-        tempo: int = 120,
+        tempo: Optional[float] = None,
         no_separate: bool = False,
         amt: str = "auto",
         style: str = "fingerstyle",
@@ -101,6 +101,9 @@ def run(input_path: Optional[str] = None, *,
     # L4 — music-theory analysis (feeds the L5 arrangement engine)
     analysis = analyze(notes)
 
+    # the detected tempo wins unless the caller explicitly overrides it
+    eff_tempo = float(tempo) if tempo else float(analysis.tempo)
+
     # L4.5 — quantize note timing onto the detected beat grid
     qnotes = quantize_notes(notes, analysis, subdivision=2)
 
@@ -113,33 +116,33 @@ def run(input_path: Optional[str] = None, *,
 
     # --- exports (in-memory always; to disk when a path is given) ---
     if gp5_path:
-        to_gp5(placed, gp5_path, tempo=analysis.tempo, anchor=anchor)
+        to_gp5(placed, gp5_path, tempo=eff_tempo, anchor=anchor)
         gp5_bytes = open(gp5_path, "rb").read()
     else:
         gp5_bytes = _write_to_temp(
-            lambda p: to_gp5(placed, p, tempo=analysis.tempo, anchor=anchor))
+            lambda p: to_gp5(placed, p, tempo=eff_tempo, anchor=anchor))
 
     wav_bytes = None
     if emit_wav:
         if wav_path:
-            placed_to_wav(placed, wav_path, tempo=analysis.tempo)
+            placed_to_wav(placed, wav_path, tempo=eff_tempo)
             wav_bytes = open(wav_path, "rb").read()
         else:
             wav_bytes = _write_to_temp(
-                lambda p: placed_to_wav(placed, p, tempo=analysis.tempo))
+                lambda p: placed_to_wav(placed, p, tempo=eff_tempo))
 
     midi_bytes = None
     if emit_midi:
         if midi_path:
-            placed_to_midi(placed, midi_path, tempo=analysis.tempo)
+            placed_to_midi(placed, midi_path, tempo=eff_tempo)
             midi_bytes = open(midi_path, "rb").read()
         else:
             midi_bytes = _write_to_temp(
-                lambda p: placed_to_midi(placed, p, tempo=analysis.tempo))
+                lambda p: placed_to_midi(placed, p, tempo=eff_tempo))
 
     html_str = html_preview_string(
         placed,
-        tempo=float(analysis.tempo),
+        tempo=eff_tempo,
         subtitle=(getattr(analysis, "key", "") or ""),
         audio_src=(os.path.basename(wav_path) if wav_path else None))
     if html_path:
@@ -151,12 +154,12 @@ def run(input_path: Optional[str] = None, *,
         placed=placed,
         analysis=analysis,
         summary=format_summary(analysis),
-        ascii_tab=ascii_tab(placed, tempo=float(analysis.tempo)),
+        ascii_tab=ascii_tab(placed, tempo=eff_tempo),
         html_preview=html_str,
         gp5_bytes=gp5_bytes,
         wav_bytes=wav_bytes,
         midi_bytes=midi_bytes,
-        tempo=float(analysis.tempo),
+        tempo=eff_tempo,
         key=getattr(analysis, "key", "") or "",
         role_counts=dict(rc),
     )
@@ -169,30 +172,36 @@ def run_import(tab_path: str, *,
                html_path: Optional[str] = None,
                pdf_path: Optional[str] = None,
                emit_midi: bool = True,
-               emit_wav: bool = True) -> PipelineResult:
+               emit_wav: bool = True,
+               tempo: Optional[float] = None,
+               track_index: int = 0) -> PipelineResult:
     """Import an existing tab file and re-export it -- no re-arrangement.
 
     A tab somebody already made is ground truth: we keep the ``string`` /
-    ``fret`` they chose and the tuning of the source track, and skip L1-L7.
+    ``fret`` they chose and the tuning of the source, and skip L1-L7.
     This is the path for "I bought / downloaded a tab, give me my own PDF".
+
+    ``tempo`` overrides the tempo found in the file; a text tab has none, so
+    it defaults to 120 BPM.
     """
-    from importers import load_gp
+    from importers import load_tab
     from tab_pdf import write_tab_pdf
 
-    score = load_gp(tab_path)
+    score = load_tab(tab_path, tempo=tempo, track_index=track_index)
     placed = score.placed
     if not placed:
         raise ValueError(f"{tab_path}: no notes could be imported")
 
+    title = score.title or score.track_name or "Resonote"
     gp5_bytes = b""
     if gp5_path:
-        to_gp5(placed, gp5_path, tempo=score.tempo,
-               title=score.title or "Resonote")
+        to_gp5(placed, gp5_path, tempo=score.tempo, title=title,
+               tuning=score.tuning)
         gp5_bytes = open(gp5_path, "rb").read()
 
     if pdf_path:
-        write_tab_pdf(placed, pdf_path, tempo=score.tempo,
-                      title=score.title or score.track_name or "Resonote")
+        write_tab_pdf(placed, pdf_path, tempo=score.tempo, title=title,
+                      tuning=score.tuning, subtitle=score.tuning_note())
 
     wav_bytes = None
     if emit_wav:
@@ -216,16 +225,13 @@ def run_import(tab_path: str, *,
         placed, tempo=score.tempo,
         subtitle=(score.title or "") + (f" · {score.track_name}"
                                         if score.track_name else ""),
-        audio_src=(os.path.basename(wav_path) if wav_path else None))
+        audio_src=(os.path.basename(wav_path) if wav_path else None),
+        tuning=score.tuning)
     if html_path:
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_str)
 
-    tuning_note = ""
-    if score.tuning and score.tuning != [64, 59, 55, 50, 45, 40]:
-        names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-        tuning_note = "tuning: " + " ".join(
-            names[p % 12] for p in reversed(score.tuning))
+    tuning_note = score.tuning_note()
 
     summary_lines = [
         f"imported  : {os.path.basename(tab_path)}",
@@ -244,7 +250,7 @@ def run_import(tab_path: str, *,
         placed=placed,
         analysis=None,
         summary="\n".join(summary_lines),
-        ascii_tab=ascii_tab(placed, tempo=score.tempo),
+        ascii_tab=ascii_tab(placed, tempo=score.tempo, tuning=score.tuning),
         html_preview=html_str,
         gp5_bytes=gp5_bytes,
         wav_bytes=wav_bytes,
