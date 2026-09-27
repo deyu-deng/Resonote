@@ -5,7 +5,7 @@
 - **输入**：mp3/wav 音频、MIDI、Guitar Pro 3/4/5（.gp3/.gp4/.gp5/.gtp）、ASCII 文本谱（.txt/.tab）
 - **输出**：`.gp5`（编辑）、`.musicxml`（标准交换）、MIDI、WAV 试听、HTML 预览、简易 PDF
 - **核心思路**：好谱子是**减法**——分离出主旋律 + 低音支撑 + 少量和声点缀，而不是复刻整曲音频
-- 测试：**198 个**（`pytest tests/`）
+- 测试：**202 个**（`pytest tests/`）
 
 ---
 
@@ -128,7 +128,7 @@ LLM edit: drop harmony = 1.06（为了突出主旋律，和声应点缀少而精
 
 ```bash
 # 1. 全量测试
-.venv/bin/python -m pytest tests/ -q          # 198 个
+.venv/bin/python -m pytest tests/ -q          # 202 个
 
 # 2. 可弹性核验（同时音数 / 品位跨度——人手只有 4-5 品）
 .venv/bin/python experiments/verify_playability.py [产物.gp5]   # 默认取 runs/ 下最新
@@ -195,7 +195,7 @@ importers.py      GP3/4/5 + ASCII 文本谱导入
 models.py         Note / PlacedNote / STANDARD_TUNING / tuning_labels
 web_server.py     Web 后端
 web/              前端（alphaTab 渲染）
-tests/            198 个测试（test_m1..m17 编号按里程碑）
+tests/            202 个测试（test_m1..m17 编号按里程碑）
 experiments/      OMR 原型 / GP7 转换 / 可弹性核验 / 节拍对照 bench_beats.py / 两进程分离流程
 tools/alphatab/   alphaTab 独立校验器（node，npm install 后直接用，见 §5）
 samples/          自造示例谱（可提交）
@@ -215,8 +215,19 @@ runs/             每次跑出来的产物按日期归档（gitignore），仓�
 |---|---|---|---|
 | MuseScore Studio 4.7.5 | `/Applications/MuseScore 4.app/Contents/MacOS/mscore` | 出版级 PDF/SVG/PNG，`--pdf` 自动使用 | ✅ 无头出图可用；`-s` 不存在；退出码不可信 |
 | LilyPond 2.26.0 | `~/.local/bin/lilypond`（实体在 `~/.local/share/lilypond-2.26.0`） | 和弦框页 / Nashville 格谱 | ✅ `--pdf/--svg/--png` 可渲染 StaffGroup+TabStaff；`-b` 不支持 |
-| beat-this 1.1.0 | `.venv`（权重在 `~/.cache/torch/hub/checkpoints/`，来自 cloud.cp.jku.at 而非 github，所以下得动） | **L4 拍点/重拍，已接入 `beats.py`** | ✅ 真实歌曲上把速度从错的 94 修正为 111 BPM；注意库自带示例把返回值顺序写反了 |
-| alphaTab 1.8.4 | `tools/alphatab/node_modules` | 独立校验器 | ✅ |
+| FluidSynth 2.6.1 | `/opt/homebrew/bin/fluidsynth` | **真实吉他音色试听**，`--wav` 自动使用 | ✅ 主增益默认 0.1，必须 `-g 1.0` |
+| SoundFont | `/Applications/MuseScore 4.app/Contents/Resources/sound/MS Basic.sf3` | FluidSynth 的音色库（本机原本一个都没有） | ✅ 用 `RESONOTE_SOUNDFONT` 可覆盖 |
+| beat-this 1.1.0 | `.venv`（权重来自 cloud.cp.jku.at 而非 github） | **L4 拍点/重拍，已接入 `beats.py`** | ✅ 真实歌曲上把速度从错的 94 修正为 111 BPM；库自带示例把返回值顺序写反了 |
+| muscriptor 0.3.0 | `.venv`（**权重 gated，未接入**） | L3 转写换代 | ❌ 权重需 HF 账号接受许可，见 §8 P5 |
+| alphaTab 1.8.4 | `tools/alphatab/node_modules` | 独立校验器（不做印刷：无分页） | ✅ |
+
+**brew 现在可用**（之前不行）：`~/.gitconfig` 里 `http.proxy=http://127.0.0.1:1087` 指向一个已经不存在的端口——代理改成了 TUN/VPN 模式（6 个 `utun` 接口，`github.com:443` 直连可达），git 却仍被要求走那个死端口，于是 `brew update` 和 `git push` 一起失败，而 curl 因为不读 git 配置所以一直好使。清掉即可：
+
+```bash
+git config --global --unset http.proxy && git config --global --unset https.proxy
+```
+
+在那之前用逐次覆盖绕过，不改全局配置：`GIT_CONFIG_PARAMETERS="'http.proxy=' 'https.proxy='" brew update`
 
 **待办（按建议优先级）**：
 
@@ -226,15 +237,15 @@ runs/             每次跑出来的产物按日期归档（gitignore），仓�
 | P1 | ✅ 分离 | demucs 全链路已通（上游已归档，后路见 P5） |
 | P2 | ✅ 出版级排版 | MuseScore 接好，`--pdf` 自动走它；自写 `tab_pdf` 降级为兜底 |
 | P3 | 五线谱+六线谱同页 | `musicxml_export.build_musicxml(staves=2)` 编码已写但**MuseScore 渲成空五线谱 + 浮空数字**。多谱表 MusicXML 要用「写完 staff 1 → 整小节 `<backup>` → 写 staff 2」的布局，是另一件活 |
-| P4 | 换真音色试听 | `fluid-synth`（brew 装不了，走 bottle 直链或官方 pkg）+ GeneralUser GS 音色库，替换 Karplus-Strong |
-| P5 | L3/L4 换代 | 转写：MuScriptor 0.3.0 在 PyPI（权重 CC BY-NC）；分离：`msst` 0.1.0 在 PyPI，或 `mlx-audio-separator` 走 MLX。和弦：ChordMini **不在 PyPI**（要 git 装）。**全部等 P0 做完再动** |
+| P4 | ✅ 真音色试听 | FluidSynth 2.6.1 + MuseScore 自带的 MS Basic.sf3 已接入 `midi_export.render_preview`，`--wav` 自动使用，Karplus-Strong 降为兜底并会报告用的是哪个 |
+| P5 | L3 换代（**卡在 HF 授权**） | `muscriptor` 0.3.0 已装进 `.venv`，但权重是 gated：① 浏览器登录并接受 <https://huggingface.co/MuScriptor/muscriptor-small>（免费、自动放行）② `uvx hf auth login` 或 `export HF_TOKEN=...`。做完这两步才能接线并评测。它自己也依赖 `beat-this>=1.1`，与 L4 的选择互相印证。分离后路：`msst` 0.1.0 在 PyPI |
 | P6 | `place_bass` 选八度参考旋律把位 | 消掉剩余 17% 超 5 品段落 |
 | P7 | 技法记号（H/P/击勾弦） | 纯规则可做；alphaTab 的 MusicXML 侧 bend/slide/hammer 都支持 |
 | P8 | 单乐器改走 f0 | `rmvpe-onnx` 0.2.3 在 PyPI（MIT）。人声/贝斯近单音，f0 比把 basic_pitch 套在 stem 上准得多 |
 
 **已核实为死路 / 不要碰**：madmom（PyPI 停在 2018，3.10+ 装不上，许可证暧昧）、YourMT3+（`yourmt3-plus` 在 PyPI 404，上游仓库 2024-11 冻结）、MR-MT3（无官方实现）、TuxGuitar（无头 CLI 不存在，PDF 只在 GUI 里）、alphaTab 做印刷（**没有分页**，官方文档自己写着 "no strict print-page display yet"）、abjad 3.31 与 librosa 1.0（都要 Python ≥3.12，我们是 3.11）。
 
-**未解决**：整曲混音转写 F1≈0.43（2026 年流行多轨的客观基线只有 onset F1≈29%，所以天花板在 L3 不在编曲）；Web 无鉴权；**downbeat 已检测到但还没被用上**——`beats.py` 现在从波形取回拍点和重拍（真实歌曲上把速度从错的 94 修正为 111 BPM），但小节线仍锚在第一个音上，`analysis._build_bars` 与两个导出器的 anchor 都还没读 `analysis.downbeats`。
+**未解决**：`transcribe.py` 的 YourMT3 后端（38 处引用、被 test_m1 断言）与 `analysis.py` 的 madmom 后端（34 处引用）都是**不可能被满足的扩展点**——前者上游冻结且 PyPI 无此包，后者装不上 3.10+。它们目前能优雅失败，所以没在其它改动里顺手删；清理需要单独一次，连测试一起改。另：整曲混音转写 F1≈0.43（2026 年流行多轨的客观基线只有 onset F1≈29%，所以天花板在 L3 不在编曲）；Web 无鉴权；**downbeat 已检测到但还没被用上**——`beats.py` 现在从波形取回拍点和重拍（真实歌曲上把速度从错的 94 修正为 111 BPM），但小节线仍锚在第一个音上，`analysis._build_bars` 与两个导出器的 anchor 都还没读 `analysis.downbeats`。
 
 
 ---

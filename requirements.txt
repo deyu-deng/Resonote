@@ -1,49 +1,89 @@
-# Core (always required)
+# 这一份是"装齐东西才能跑"的清单。装法：
+#   uv pip install --python .venv/bin/python -r requirements.txt
+# （uv 是一个比 pip 快很多的安装工具；--python 指定装进项目自己的 .venv，
+#   不污染系统 Python。）
+
+# ---------------------------------------------------------------------------
+# 必需
+# ---------------------------------------------------------------------------
 pyguitarpro>=0.11
 pretty_midi>=0.2.11
-numpy>=2.0               # 3.13 只有 numpy>=2 的预编译 wheel;1.x 需源码编译且会失败
-soundfile>=0.12          # audio I/O for L2 separation (lightweight, libsndfile)
-setuptools<81            # basic_pitch/resampy 依赖 pkg_resources，setuptools 81+ 已移除，会导致 import 失败
+numpy>=2.0               # 3.13 只有 numpy>=2 的预编译包；1.x 要现场编译源码，会失败
+soundfile>=0.12          # 读写音频文件（L2 分离要用）
+setuptools<81            # basic_pitch 依赖一个老接口 pkg_resources，81 版起被删掉，不钉住就 import 失败
 
-# Audio transcription (L3) — Basic-Pitch (pulls TensorFlow ~1GB).
-# Enables mp3/wav input. F1≈0.43: good for clean single-instrument audio,
-# rough for dense mixes (pair with demucs below for full songs).
+# ---------------------------------------------------------------------------
+# 听音频 → 音符（L3）
+# ---------------------------------------------------------------------------
+# Spotify 出的开源转写模型，会连带装 TensorFlow（约 1GB）。
+# 整曲混音准确率只有 F1≈0.43（"一半对一半错"级别），单乐器干净录音才好用，
+# 所以要和下面的 demucs 配合：先分离、再转写。
 basic_pitch
 
-# Source separation (L2) — Demucs (pulls PyTorch ~800MB + model weights).
-# torchaudio must be present too (demucs imports it); torchaudio 2.9+ moved
-# audio decoding to torchcodec, so separate.py reads files via soundfile
-# instead and only needs torchaudio for resampling. Install with uv:
-# Splits a full-song mix into vocals/bass/other stems before transcription,
-# materially improving mp3 quality. Optional but recommended for full songs.
+# ---------------------------------------------------------------------------
+# 把一首歌拆成人声/贝斯/其它/鼓（L2）
+# ---------------------------------------------------------------------------
+# Meta 出的开源分离模型，会连带装 PyTorch（约 800MB）+ 模型权重。
+# 注意：它的官方仓库从 2023-11 起就没人维护了（"上游归档"= 原作者那边关门了，
+# 以后不会再修 bug）。今天还能用，替代路线见文件末尾的 msst。
 demucs
 
-# Beat tracking (L4) — used by experiments/bench_beats.py. Installed, but NOT
-# yet wired into analysis.py: on the only audio available here (our own
-# synthesized render) it got the tempo right and the beat phase wrong, which is
-# not a usable verdict. See README §8 P0 for why this is blocked on real songs.
+# ---------------------------------------------------------------------------
+# 打拍子（L4）—— 已经接进代码，不是可选装饰
+# ---------------------------------------------------------------------------
+# 从音频里找"每拍在哪一小节第一拍在哪"。之前是我们自己用"音符之间的间隔"倒推，
+# 等于拿转写结果去验证转写结果，一首真实歌曲上把速度判成了 94 BPM，
+# 而音频自己的周期性证据指向 111 BPM。接上它之后修正为 111.1。
+# 它的模型权重放在奥地利 JKU 大学自己的服务器上，不在 github，
+# 所以连 github 不通的时候也能下载成功。
 beat-this
 
-# Optional (NOT installed by default):
-#   MuScriptor (2026 AMT, Multi-F1 47.8 vs YourMT3+ 21.9; weights are
-#   CC BY-NC 4.0, so it cannot ship in a commercial product without a swap):
-#     pip install muscriptor
-#   RMVPE ONNX (monophonic f0 for the vocal/bass stems — near-perfect where
-#   polyphonic AMT collapses; Apache-2.0, small, fast on Apple Silicon):
-#     pip install rmvpe-onnx
-#   MSST (BS-RoFormer separation; demucs' upstream is archived since 2023):
-#     pip install msst
-#
-# Do NOT bother with these, checked 2026-09-27:
-#   madmom      -- PyPI stopped at 0.16.1 (2018), fails to install on 3.10+,
-#                  and its license is ambiguous. beat-this replaces the beat
-#                  half of the argument; nothing replaces the chord half yet.
-#   YourMT3+    -- `yourmt3-plus` does not exist on PyPI (404) and the upstream
-#                  repo has been frozen since 2024-11. transcribe.py still has
-#                  a backend slot for it; it can never load.
-#   all-in-one  -- dead since 2024-05, and the PyPI name is a 2021 v0.0.1 stub.
-#   Essentia    -- AGPL-3.0.
-
-# Dev (tests)
+# ---------------------------------------------------------------------------
+# 开发/测试
+# ---------------------------------------------------------------------------
 pytest
 
+# ---------------------------------------------------------------------------
+# 下面这些是"外部程序"，不是 pip 能装的东西。缺了都能跑，只是质量降级，
+# 而且命令行会明确告诉你这次用的是哪一个。
+#
+#   brew install --cask musescore
+#       → 出版级 PDF/矢量图。4.7.5 版有两个坑：手册里的 -s 参数根本不存在
+#         （传了就直接不干活）；退出码不可信（它收尾时会假装崩溃，
+#         所以只能看"文件有没有真的生成"来判断成败）。
+#   brew install fluid-synth
+#       → 真实吉他音色的试听音频。必须加 -g 1.0：它默认主音量是 0.1，
+#         不加就会比任何正常播放器小五倍。
+#   音色库（.sf2 / .sf3）
+#       → brew 不提供，这台机器上原本一个都没有。现在退而用 MuseScore
+#         自带的 MS Basic.sf3；想换成自己的：export RESONOTE_SOUNDFONT=路径
+#   LilyPond 2.26
+#       → 满页和弦框那种图表谱。注意 brew 装不上（brew 版本比它的安装包元数据
+#         旧，报 unknown install step），要用官网的 darwin-arm64 压缩包自己装。
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 可选的 Python 包：故意没有默认装
+#
+#   muscriptor     2026 年最强的开源转写（多乐器 F1 47.8，对比 YourMT3+ 21.9）。
+#                  已经装进 .venv 了，但**用不了**：它的模型权重要先用
+#                  HuggingFace 账号在网页上点"接受条款"，再在本机登录一次
+#                  （uvx hf auth login）。所以还没接进代码。
+#                  另外权重条款是"禁止商用"，将来真要发行必须换掉。
+#   rmvpe-onnx     人声/贝斯这种"一次只有一个音"的声部，用音高跟踪比用
+#                  basic_pitch 准得多，而且许可干净（Apache-2.0）、体积小。
+#                  这是 L3 剩下最划算的一刀。
+#   msst           分离模型的替代路线（BS-RoFormer），等 demucs 不能用时接上。
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 查过了、别浪费时间（2026-09-27 逐个核实）：
+#   madmom      官方包停在 2018 年的 0.16.1，Python 3.10 以上装不上，
+#               许可说法还自相矛盾。analysis.py 里给它留的位置永远进不去。
+#               打拍子这半件事 beat-this 已经接手；和弦那半件暂时没人接。
+#   YourMT3+    PyPI 上没有这个包（404），原作者仓库 2024-11 就不动了。
+#               transcribe.py 里给它留的位置同样永远进不去。
+#   all-in-one  2024-05 后停更，而且 PyPI 上这个名字是 2021 年一个空壳版本。
+#   Essentia    AGPL-3.0（会传染到整个项目，发行是雷）。
+#   abjad       3.31 要求 Python 3.12+，而我们被 basic_pitch 钉死在 3.11。
+# ---------------------------------------------------------------------------
