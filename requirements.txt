@@ -18,11 +18,31 @@ basic_pitch
 # materially improving mp3 quality. Optional but recommended for full songs.
 demucs
 
+# Beat tracking (L4) — used by experiments/bench_beats.py. Installed, but NOT
+# yet wired into analysis.py: on the only audio available here (our own
+# synthesized render) it got the tempo right and the beat phase wrong, which is
+# not a usable verdict. See README §8 P0 for why this is blocked on real songs.
+beat-this
+
 # Optional (NOT installed by default):
-#   YourMT3+ (SOTA AMT, F1≈0.85, needs GPU + checkpoint):
-#     git clone https://github.com/TEAMuP-dev/yourMT3 && pip install -e .
-#   madmom (high-accuracy chord/beat on raw audio):
-#     pip install madmom
+#   MuScriptor (2026 AMT, Multi-F1 47.8 vs YourMT3+ 21.9; weights are
+#   CC BY-NC 4.0, so it cannot ship in a commercial product without a swap):
+#     pip install muscriptor
+#   RMVPE ONNX (monophonic f0 for the vocal/bass stems — near-perfect where
+#   polyphonic AMT collapses; Apache-2.0, small, fast on Apple Silicon):
+#     pip install rmvpe-onnx
+#   MSST (BS-RoFormer separation; demucs' upstream is archived since 2023):
+#     pip install msst
+#
+# Do NOT bother with these, checked 2026-09-27:
+#   madmom      -- PyPI stopped at 0.16.1 (2018), fails to install on 3.10+,
+#                  and its license is ambiguous. beat-this replaces the beat
+#                  half of the argument; nothing replaces the chord half yet.
+#   YourMT3+    -- `yourmt3-plus` does not exist on PyPI (404) and the upstream
+#                  repo has been frozen since 2024-11. transcribe.py still has
+#                  a backend slot for it; it can never load.
+#   all-in-one  -- dead since 2024-05, and the PyPI name is a 2021 v0.0.1 stub.
+#   Essentia    -- AGPL-3.0.
 
 # Dev (tests)
 pytest
