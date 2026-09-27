@@ -17,6 +17,11 @@ Pitch is recovered from the fretboard the same way the tab is built:
 
 from typing import List, Optional
 
+import os
+import shutil
+import subprocess
+import tempfile
+
 import numpy as np
 
 from models import PlacedNote
@@ -130,6 +135,67 @@ def placed_to_wav(placed: List[PlacedNote], out_path: str,
     pcm = (master * 32767.0).clip(-32768, 32767).astype("<i2")
     _write_wav(pcm, sr, out_path)
     return out_path
+
+
+def find_fluidsynth() -> Optional[str]:
+    return shutil.which("fluidsynth")
+
+
+# Searched in order. RESONOTE_SOUNDFONT wins so a user can point at their own
+# bank without a code change; MuseScore's bundled MS Basic is the pragmatic
+# default on a machine that has MuseScore, which is the same machine that can
+# already engrave our PDFs.
+_SOUNDFONT_GLOBS = [
+    "~/Library/Component-Kits/com.mrbumpy409.GeneralUserGS/GeneralUser GS.sf2",
+    "/Library/Audio/Sounds/Fampacks/*.sf2",
+    "/Library/Audio/Sounds/*.sf2",
+    "/opt/homebrew/share/fluid-synth/*.sf2",
+    "/Applications/MuseScore 4.app/Contents/Resources/sound/*.sf3",
+    "~/.local/share/soundfonts/*.sf{2,3}",
+]
+
+
+def find_soundfont() -> Optional[str]:
+    import glob
+    env = os.environ.get("RESONOTE_SOUNDFONT")
+    if env and os.path.exists(env):
+        return env
+    for pattern in _SOUNDFONT_GLOBS:
+        for hit in sorted(glob.glob(os.path.expanduser(pattern))):
+            if os.path.getsize(hit) > 1 << 20:        # ignore stubs
+                return hit
+    return None
+
+
+def render_preview(placed: List[PlacedNote], out_path: str,
+                   tempo: float = 120, sr: int = 44100) -> str:
+    """Write an audible preview and report which renderer produced it.
+
+    FluidSynth + a real guitar SoundFont when both are installed (GM program 24,
+    nylon string, which placed_to_midi already selects), otherwise the
+    dependency-free Karplus-Strong synth below. Karplus-Strong is a plucked
+    string model, not a guitar recording, so it is the fallback and not the
+    default -- callers print what they got rather than implying a recording.
+    """
+    fluid, font = find_fluidsynth(), find_soundfont()
+    if fluid and font and placed:
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                mid = os.path.join(d, "preview.mid")
+                placed_to_midi(placed, mid, tempo=tempo)
+                subprocess.run(
+                    # -g 1.0 matters: FluidSynth's default master gain is 0.1,
+                    # which renders a preview several times quieter than the
+                    # same MIDI played in any normal player.
+                    [fluid, "-ni", "-g", "1.0",
+                     "-F", out_path, "-r", str(sr), font, mid],
+                    capture_output=True, timeout=600, check=True)
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 44:
+                return f"fluidsynth ({os.path.basename(font)})"
+        except Exception:
+            pass            # any renderer trouble -> the built-in synth, no crash
+    placed_to_wav(placed, out_path, tempo=tempo, sr=sr)
+    return "karplus-strong (built-in)"
 
 
 def _write_wav(pcm: np.ndarray, sr: int, out_path: str) -> None:

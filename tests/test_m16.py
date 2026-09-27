@@ -17,6 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import engraving
 from engraving import engrave, find_engraver
+import midi_export
+from midi_export import render_preview
+from models import PlacedNote
 
 
 def test_find_engraver_returns_nothing_or_a_real_path():
@@ -86,3 +89,56 @@ def test_a_timeout_is_not_a_crash(monkeypatch):
 
     monkeypatch.setattr(engraving.subprocess, "run", raise_timeout)
     assert engrave("in.gp5", "/tmp/nope.pdf") is False
+
+
+def test_preview_prefers_fluidsynth_when_a_soundfont_exists(monkeypatch, tmp_path):
+    """Karplus-Strong is a plucked-string model, not a guitar. When a real
+    SoundFont renderer is present we must use it and say which one we used."""
+    out = str(tmp_path / "p.wav")
+    monkeypatch.setattr(midi_export, "find_fluidsynth", lambda: "/usr/bin/fluidsynth")
+    monkeypatch.setattr(midi_export, "find_soundfont", lambda: "/usr/share/x.sf3")
+    called = {}
+
+    def fake_run(cmd, **kw):
+        called["cmd"] = cmd
+        # > the 44-byte header render_preview requires of a real WAV
+        open(out, "wb").write(b"RIFF....WAVEfmt " + b"\0" * 64)
+        return type("R", (), {"returncode": 0})()
+
+    monkeypatch.setattr(midi_export.subprocess, "run", fake_run)
+    backend = render_preview(
+        [PlacedNote(pitch=64, onset=0.0, duration=0.5, string=1, fret=0,
+                    finger=0)], out, tempo=111.1)
+    assert backend.startswith("fluidsynth"), backend
+    assert "-g" in called["cmd"], "FluidSynth defaults to master gain 0.1"
+    assert called["cmd"][called["cmd"].index("-g") + 1] == "1.0"
+
+
+def test_preview_falls_back_to_the_built_in_synth_without_a_soundfont(
+        monkeypatch, tmp_path):
+    monkeypatch.setattr(midi_export, "find_fluidsynth", lambda: None)
+    monkeypatch.setattr(midi_export, "find_soundfont", lambda: None)
+    out = str(tmp_path / "p.wav")
+    backend = render_preview(
+        [PlacedNote(pitch=64, onset=0.0, duration=0.5, string=1, fret=0,
+                    finger=0)], out)
+    assert backend == "karplus-strong (built-in)"
+    assert os.path.getsize(out) > 1000
+
+
+def test_a_broken_renderer_never_costs_the_preview(monkeypatch, tmp_path):
+    """fluidsynth can fail for a hundred reasons (bad bank, no audio device);
+    the user should still get an audible file."""
+    out = str(tmp_path / "p.wav")
+    monkeypatch.setattr(midi_export, "find_fluidsynth", lambda: "/usr/bin/fluidsynth")
+    monkeypatch.setattr(midi_export, "find_soundfont", lambda: "/bad/x.sf2")
+
+    def boom(*a, **kw):
+        raise OSError("no such device")
+
+    monkeypatch.setattr(midi_export.subprocess, "run", boom)
+    backend = render_preview(
+        [PlacedNote(pitch=64, onset=0.0, duration=0.5, string=1, fret=0,
+                    finger=0)], out)
+    assert backend == "karplus-strong (built-in)"
+    assert os.path.exists(out)

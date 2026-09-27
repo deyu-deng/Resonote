@@ -26,7 +26,7 @@ from analysis import analyze, format_summary
 from quantize import quantize_notes, quantize_placed
 from arrange import arrange
 from gp_export import to_gp5
-from midi_export import placed_to_midi, placed_to_wav
+from midi_export import placed_to_midi, placed_to_wav, render_preview
 from preview import ascii_tab, html_preview_string
 
 
@@ -50,6 +50,8 @@ class PipelineResult:
     # what L3 actually produced, kept so --dump-intermediate can report this
     # run instead of transcribing a second time and describing something else
     raw_notes: List[Note] = field(default_factory=list)
+    # which renderer produced wav_bytes, so the CLI can say so out loud
+    preview_backend: str = ""
 
 
 def _write_to_temp(write_fn) -> bytes:
@@ -58,13 +60,27 @@ def _write_to_temp(write_fn) -> bytes:
     os.close(fd)
     try:
         write_fn(p)
-        with open(p, "rb") as f:
-            return f.read()
+        return _read_back(p)
     finally:
-        try:
-            os.unlink(p)
-        except OSError:
-            pass
+        _unlink(p)
+
+
+def _temp_path(suffix: str) -> str:
+    fd, p = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    return p
+
+
+def _unlink(p: str) -> None:
+    try:
+        os.unlink(p)
+    except OSError:
+        pass
+
+
+def _read_back(p: str) -> bytes:
+    with open(p, "rb") as f:
+        return f.read()
 
 
 def _load_for_beats(path: str):
@@ -155,13 +171,15 @@ def run(input_path: Optional[str] = None, *,
     wav_bytes = None
 
     wav_bytes = None
+    preview_backend = ""
     if emit_wav:
-        if wav_path:
-            placed_to_wav(placed, wav_path, tempo=eff_tempo)
-            wav_bytes = open(wav_path, "rb").read()
-        else:
-            wav_bytes = _write_to_temp(
-                lambda p: placed_to_wav(placed, p, tempo=eff_tempo))
+        target = wav_path or _temp_path(".wav")
+        try:
+            preview_backend = render_preview(placed, target, tempo=eff_tempo)
+            wav_bytes = _read_back(target)
+        finally:
+            if not wav_path:
+                _unlink(target)
 
     midi_bytes = None
     if emit_midi:
@@ -195,6 +213,7 @@ def run(input_path: Optional[str] = None, *,
         key=getattr(analysis, "key", "") or "",
         role_counts=dict(rc),
         raw_notes=list(notes),
+        preview_backend=preview_backend,
     )
 
 
@@ -243,13 +262,15 @@ def run_import(tab_path: str, *,
                        title=title, tuning=score.tuning)
 
     wav_bytes = None
+    preview_backend = ""
     if emit_wav:
-        if wav_path:
-            placed_to_wav(placed, wav_path, tempo=score.tempo)
-            wav_bytes = open(wav_path, "rb").read()
-        else:
-            wav_bytes = _write_to_temp(
-                lambda p: placed_to_wav(placed, p, tempo=score.tempo))
+        target = wav_path or _temp_path(".wav")
+        try:
+            preview_backend = render_preview(placed, target, tempo=score.tempo)
+            wav_bytes = _read_back(target)
+        finally:
+            if not wav_path:
+                _unlink(target)
 
     midi_bytes = None
     if emit_midi:
@@ -297,4 +318,5 @@ def run_import(tab_path: str, *,
         tempo=float(score.tempo),
         key="",
         role_counts={"melody": len(placed)},
+        preview_backend=preview_backend,
     )

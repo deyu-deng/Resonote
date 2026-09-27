@@ -284,7 +284,7 @@ def main():
     if args.musicxml:
         print(f"\nWrote MusicXML {args.musicxml}")
     if args.wav:
-        print(f"\nWrote preview WAV {args.wav}")
+        print(f"\nWrote preview WAV {args.wav}  (audio: {res.preview_backend})")
 
     # Last, and never before the artifacts: the dump is diagnostics, and a
     # diagnostics failure must not be able to cost the user their score.
