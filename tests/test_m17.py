@@ -83,3 +83,18 @@ def test_analyze_falls_back_when_the_tracker_has_no_answer(monkeypatch):
 def test_downbeats_default_to_empty_so_import_mode_is_unchanged():
     notes = [Note(pitch=60, onset=0.0, duration=1.0)]
     assert analyze(notes).downbeats == []
+
+
+def test_demucs_random_shift_is_off_by_default():
+    """demucs' `shifts` shifts the mix by a RANDOM 0-0.5 s and averages the
+    result over N passes. At N=1 nothing is averaged, so the default we shipped
+    made every run different: the same 30 s clip transcribed to 228 / 246 / 239
+    notes on three runs, which is enough to drown out any improvement an eval
+    could measure. Two full runs now produce byte-identical .gp5."""
+    import inspect
+
+    from separate import DemucsSeparator
+    sig = inspect.signature(DemucsSeparator.__init__)
+    assert sig.parameters["shifts"].default == 0, (
+        "shifts>0 with no averaging reintroduces run-to-run nondeterminism; "
+        "if you raise it, seed the RNG and say so here")

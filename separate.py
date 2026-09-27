@@ -173,7 +173,15 @@ class DemucsSeparator(Separator):
     """
 
     def __init__(self, model_name: str = "htdemucs", device: str = "auto",
-                 shifts: int = 1, overlap: float = 0.25):
+                 shifts: int = 0, overlap: float = 0.25):
+        """``shifts`` is demucs' random-time-shift knob: with shifts=N>0 the
+        mix is shifted by a *random* 0-0.5 s offset, un-shifted, and averaged N
+        times. At N=1 there is nothing to average, so it was pure
+        nondeterminism for no quality gain -- the same song produced 228/246/239
+        notes across runs, which makes any measurement of an "improvement"
+        meaningless. Use shifts>=2 if you want the ensemble benefit, and accept
+        that the output then depends on the RNG seed.
+        """
         self._model_name = model_name
         self._device = device
         self._shifts = shifts
