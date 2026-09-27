@@ -145,6 +145,26 @@ class PassthroughSeparator(Separator):
         return [Stem(name="mix", audio=audio, sr=sr)]
 
 
+def _load_audio(path: str):
+    """(channels, samples) float32 tensor + sample rate.
+
+    torchaudio 2.9+ moved audio decoding into the separate ``torchcodec``
+    package, so ``torchaudio.load`` raises ImportError on a plain install.
+    soundfile (libsndfile) is already a dependency of this project and reads
+    everything demucs needs, so it is tried first; ``torchaudio.load`` stays
+    as the fallback for anything libsndfile cannot decode.
+    """
+    try:
+        import numpy as np
+        import soundfile as sf
+        data, sr = sf.read(path, dtype="float32", always_2d=True)
+        import torch
+        return torch.from_numpy(np.ascontiguousarray(data.T)), int(sr)
+    except Exception:
+        import torchaudio
+        return torchaudio.load(path)
+
+
 class DemucsSeparator(Separator):
     """Source separation via Meta's HTDemucs v4.
 
@@ -198,7 +218,7 @@ class DemucsSeparator(Separator):
         except ImportError as e:
             raise RuntimeError("PyTorch/torchaudio required for demucs.") from e
 
-        wav, sr = torchaudio.load(path)  # (channels, samples)
+        wav, sr = _load_audio(path)  # (channels, samples)
         if sr != model.samplerate:
             wav = torchaudio.transforms.Resample(sr, model.samplerate)(wav)
             sr = model.samplerate

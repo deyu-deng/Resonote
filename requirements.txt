@@ -11,6 +11,9 @@ setuptools<81            # basic_pitch/resampy 依赖 pkg_resources，setuptools
 basic_pitch
 
 # Source separation (L2) — Demucs (pulls PyTorch ~800MB + model weights).
+# torchaudio must be present too (demucs imports it); torchaudio 2.9+ moved
+# audio decoding to torchcodec, so separate.py reads files via soundfile
+# instead and only needs torchaudio for resampling. Install with uv:
 # Splits a full-song mix into vocals/bass/other stems before transcription,
 # materially improving mp3 quality. Optional but recommended for full songs.
 demucs

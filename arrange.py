@@ -79,14 +79,17 @@ def finger_melody(notes, forbidden=None) -> List[PlacedNote]:
         return []
 
     cand = []
+    pitches = []                       # folded into the guitar's range
     for i, n in enumerate(notes):
         fb = forbidden[i] if forbidden else set()
-        c = [(s, f) for (s, f) in candidate_positions(n.pitch) if s not in fb]
+        pitch = _in_guitar_range(n.pitch)
+        pitches.append(pitch)
+        c = [(s, f) for (s, f) in candidate_positions(pitch) if s not in fb]
         if not c:
-            c = candidate_positions(n.pitch)   # fall back if every option forbidden
+            c = candidate_positions(pitch)   # fall back if every option forbidden
             best = min(range(1, 7),
-                       key=lambda s: abs((n.pitch - OPEN_MIDI[s]) - 5))
-            fret = n.pitch - OPEN_MIDI[best]
+                       key=lambda s: abs((pitch - OPEN_MIDI[s]) - 5))
+            fret = pitch - OPEN_MIDI[best]
             fret = max(0, min(MAX_FRET, fret))
             c = [(best, fret)]
         cand.append(c)
@@ -118,23 +121,40 @@ def finger_melody(notes, forbidden=None) -> List[PlacedNote]:
     for i, n in enumerate(notes):
         s, f = cand[i][path[i]]
         placed.append(PlacedNote(
-            pitch=n.pitch, onset=n.onset, duration=n.duration,
+            pitch=pitches[i], onset=n.onset, duration=n.duration,
             string=s, fret=f, finger=0, pluck=PLUCK.get(s, ""), role="melody"))
     _assign_fingers(placed)
     return placed
+
+
+def _in_guitar_range(pitch: int) -> int:
+    """Fold a MIDI pitch into what a standard-tuned guitar can sound.
+
+    A separated bass stem goes below the low E (MIDI 40) and vocals go above
+    fret 19 on the high E; a guitarist transposes by octaves rather than
+    skipping the note. Every pitch in [40, 83] is reachable, and the string
+    ranges overlap enough that `candidate_positions` is never empty here.
+    """
+    lo, hi = OPEN_MIDI[6], OPEN_MIDI[1] + MAX_FRET
+    while pitch < lo:
+        pitch += 12
+    while pitch > hi:
+        pitch -= 12
+    return pitch
 
 
 def place_bass(notes) -> List[PlacedNote]:
     """Place bass roots low on the neck (strings 5/6, low on the fretboard)."""
     placed = []
     for n in sorted(notes, key=lambda x: x.onset):
-        cands = [(s, f) for (s, f) in candidate_positions(n.pitch) if f <= 12]
+        pitch = _in_guitar_range(n.pitch)
+        cands = [(s, f) for (s, f) in candidate_positions(pitch) if f <= 12]
         if not cands:
-            cands = candidate_positions(n.pitch)
+            cands = candidate_positions(pitch)
         # lowest string (thickest) for that root
         s, f = max(cands, key=lambda c: c[0])
         placed.append(PlacedNote(
-            pitch=n.pitch, onset=n.onset, duration=n.duration,
+            pitch=pitch, onset=n.onset, duration=n.duration,
             string=s, fret=f, finger=0, pluck=PLUCK.get(s, ""), role="bass"))
     _assign_fingers(placed)
     return placed
@@ -158,16 +178,17 @@ def place_harmony(notes) -> List[PlacedNote]:
             strings = [4, 3, 2][:k]
         for i, n in enumerate(grp):
             s = strings[i] if i < len(strings) else strings[-1]
-            fret = n.pitch - OPEN_MIDI[s]
+            pitch = _in_guitar_range(n.pitch)
+            fret = pitch - OPEN_MIDI[s]
             while fret < 0 and s > 1:
                 s -= 1
-                fret = n.pitch - OPEN_MIDI[s]
+                fret = pitch - OPEN_MIDI[s]
             while fret > MAX_FRET and s < 6:
                 s += 1
-                fret = n.pitch - OPEN_MIDI[s]
+                fret = pitch - OPEN_MIDI[s]
             fret = max(0, min(MAX_FRET, fret))
             placed.append(PlacedNote(
-                pitch=n.pitch, onset=n.onset, duration=n.duration,
+                pitch=pitch, onset=n.onset, duration=n.duration,
                 string=s, fret=fret, finger=0,
                 pluck=PLUCK.get(s, ""), role="harmony"))
     _assign_fingers(placed)

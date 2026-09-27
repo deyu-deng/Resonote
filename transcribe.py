@@ -17,6 +17,7 @@ separate the mix into stems (L2), transcribe each stem (L3), merge with
 
 from __future__ import annotations
 
+import gc
 import os
 import tempfile
 from abc import ABC, abstractmethod
@@ -309,6 +310,11 @@ def transcribe_audio(
     sep_kind = "auto" if use_separation else "passthrough"
     separator = get_separator(sep_kind)
     stems = separator.separate(path)
+    del separator
+    gc.collect()   # free the demucs model before the AMT backend loads:
+                   # demucs (torch) and basic_pitch (TF) never need to be
+                   # resident together, and holding both is what gets long
+                   # songs killed mid-prediction on small machines
 
     # filter stems (skip drums for guitar arrangement)
     if stem_filter and len(stems) > 1:
