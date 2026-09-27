@@ -5,7 +5,7 @@
 - **输入**：mp3/wav 音频、MIDI、Guitar Pro 3/4/5（.gp3/.gp4/.gp5/.gtp）、ASCII 文本谱（.txt/.tab）
 - **输出**：`.gp5`（编辑）、`.musicxml`（标准交换）、MIDI、WAV 试听、HTML 预览、简易 PDF
 - **核心思路**：好谱子是**减法**——分离出主旋律 + 低音支撑 + 少量和声点缀，而不是复刻整曲音频
-- 测试：**192 个**（`pytest tests/`）
+- 测试：**198 个**（`pytest tests/`）
 
 ---
 
@@ -128,7 +128,7 @@ LLM edit: drop harmony = 1.06（为了突出主旋律，和声应点缀少而精
 
 ```bash
 # 1. 全量测试
-.venv/bin/python -m pytest tests/ -q          # 192 个
+.venv/bin/python -m pytest tests/ -q          # 198 个
 
 # 2. 可弹性核验（同时音数 / 品位跨度——人手只有 4-5 品）
 .venv/bin/python experiments/verify_playability.py [产物.gp5]   # 默认取 runs/ 下最新
@@ -195,7 +195,7 @@ importers.py      GP3/4/5 + ASCII 文本谱导入
 models.py         Note / PlacedNote / STANDARD_TUNING / tuning_labels
 web_server.py     Web 后端
 web/              前端（alphaTab 渲染）
-tests/            192 个测试（test_m1..m16 编号按里程碑）
+tests/            198 个测试（test_m1..m17 编号按里程碑）
 experiments/      OMR 原型 / GP7 转换 / 可弹性核验 / 节拍对照 bench_beats.py / 两进程分离流程
 tools/alphatab/   alphaTab 独立校验器（node，npm install 后直接用，见 §5）
 samples/          自造示例谱（可提交）
@@ -215,14 +215,14 @@ runs/             每次跑出来的产物按日期归档（gitignore），仓�
 |---|---|---|---|
 | MuseScore Studio 4.7.5 | `/Applications/MuseScore 4.app/Contents/MacOS/mscore` | 出版级 PDF/SVG/PNG，`--pdf` 自动使用 | ✅ 无头出图可用；`-s` 不存在；退出码不可信 |
 | LilyPond 2.26.0 | `~/.local/bin/lilypond`（实体在 `~/.local/share/lilypond-2.26.0`） | 和弦框页 / Nashville 格谱 | ✅ `--pdf/--svg/--png` 可渲染 StaffGroup+TabStaff；`-b` 不支持 |
-| beat-this 1.1.0 | `.venv`（权重在 `~/.cache/torch/hub/checkpoints/`，来自 cloud.cp.jku.at 非 github） | L4 拍点/重拍 | ⚠️ 只在**合成音频**上测过：速度判对 93.7 vs 93，拍点相位不可靠（见下） |
+| beat-this 1.1.0 | `.venv`（权重在 `~/.cache/torch/hub/checkpoints/`，来自 cloud.cp.jku.at 而非 github，所以下得动） | **L4 拍点/重拍，已接入 `beats.py`** | ✅ 真实歌曲上把速度从错的 94 修正为 111 BPM；注意库自带示例把返回值顺序写反了 |
 | alphaTab 1.8.4 | `tools/alphatab/node_modules` | 独立校验器 | ✅ |
 
 **待办（按建议优先级）**：
 
 | 优先级 | 事项 | 说明 |
 |---|---|---|
-| **P0** | **建 eval 集（现在是硬阻塞）** | 需要**真实歌曲音频** + 权威谱配对。没有它：beat_this 要不要换、MuScriptor 强多少、和弦检测准不准，全都无法判定。`experiments/bench_beats.py` 已经是一个可跑的打分骨架，配上真实素材就能用 |
+| **P0** | **建 eval 集（真实音频已到位，缺权威谱）** | 音频侧已开：`fixtures/audio/taozhe-melody.mp3`（软链进云盘媒体库，不留第二份拷贝），`fixtures/manifest.json` 记着测得 111 BPM 及其三重证据。仍缺**人工核对过的谱**，所以音准/和声/指法三条只能自比、不能对答案。`experiments/bench_beats.py` 是现成的打分骨架 |
 | P1 | ✅ 分离 | demucs 全链路已通（上游已归档，后路见 P5） |
 | P2 | ✅ 出版级排版 | MuseScore 接好，`--pdf` 自动走它；自写 `tab_pdf` 降级为兜底 |
 | P3 | 五线谱+六线谱同页 | `musicxml_export.build_musicxml(staves=2)` 编码已写但**MuseScore 渲成空五线谱 + 浮空数字**。多谱表 MusicXML 要用「写完 staff 1 → 整小节 `<backup>` → 写 staff 2」的布局，是另一件活 |
@@ -234,7 +234,7 @@ runs/             每次跑出来的产物按日期归档（gitignore），仓�
 
 **已核实为死路 / 不要碰**：madmom（PyPI 停在 2018，3.10+ 装不上，许可证暧昧）、YourMT3+（`yourmt3-plus` 在 PyPI 404，上游仓库 2024-11 冻结）、MR-MT3（无官方实现）、TuxGuitar（无头 CLI 不存在，PDF 只在 GUI 里）、alphaTab 做印刷（**没有分页**，官方文档自己写着 "no strict print-page display yet"）、abjad 3.31 与 librosa 1.0（都要 Python ≥3.12，我们是 3.11）。
 
-**未解决**：整曲混音转写 F1≈0.43（2026 年流行多轨的客观基线只有 onset F1≈29%，所以天花板在 L3 不在编曲）；Web 无鉴权；小节线锚点没有依据——`analysis.detect_beats` 从已转写音符的 onset 间隔反推网格，因此把第一小节钉在**第一个音**上，它没有"重拍/downbeat"概念，指弹谱的小节线可能整体错位（这正是 P0 要解决的第一个问题）。
+**未解决**：整曲混音转写 F1≈0.43（2026 年流行多轨的客观基线只有 onset F1≈29%，所以天花板在 L3 不在编曲）；Web 无鉴权；**downbeat 已检测到但还没被用上**——`beats.py` 现在从波形取回拍点和重拍（真实歌曲上把速度从错的 94 修正为 111 BPM），但小节线仍锚在第一个音上，`analysis._build_bars` 与两个导出器的 anchor 都还没读 `analysis.downbeats`。
 
 
 ---

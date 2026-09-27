@@ -47,6 +47,9 @@ class PipelineResult:
     tempo: float = 120.0
     key: str = ""
     role_counts: dict = field(default_factory=dict)
+    # what L3 actually produced, kept so --dump-intermediate can report this
+    # run instead of transcribing a second time and describing something else
+    raw_notes: List[Note] = field(default_factory=list)
 
 
 def _write_to_temp(write_fn) -> bytes:
@@ -62,6 +65,20 @@ def _write_to_temp(write_fn) -> bytes:
             os.unlink(p)
         except OSError:
             pass
+
+
+def _load_for_beats(path: str):
+    """Mono waveform + sample rate for the audio-driven beat tracker.
+    beat_this resamples internally, so read at native rate and skip the
+    decode/seek machinery in separate.py -- this is only ever the mixdown."""
+    try:
+        import soundfile as sf
+        data, sr = sf.read(path, dtype="float32", always_2d=True)
+        return data.mean(axis=1), sr
+    except Exception as e:
+        print(f"[beats] could not read audio for beat tracking ({e}); "
+              "falling back to the note-based grid")
+        return None, None
 
 
 def run(input_path: Optional[str] = None, *,
@@ -84,6 +101,7 @@ def run(input_path: Optional[str] = None, *,
     Either ``demo=True`` or ``input_path`` must be supplied. When a ``*_path``
     argument is given the corresponding artifact is also written to disk.
     """
+    audio, audio_sr = None, None
     if demo:
         from tests.make_sample import sample_notes
         notes: List[Note] = sample_notes()
@@ -98,9 +116,11 @@ def run(input_path: Optional[str] = None, *,
             use_separation=not no_separate,
             amt=amt,
         )
+        # the mixdown, for a beat grid that is independent of the transcription
+        audio, audio_sr = _load_for_beats(input_path)
 
     # L4 — music-theory analysis (feeds the L5 arrangement engine)
-    analysis = analyze(notes)
+    analysis = analyze(notes, audio=audio, sr=audio_sr)
 
     # the detected tempo wins unless the caller explicitly overrides it
     eff_tempo = float(tempo) if tempo else float(analysis.tempo)
@@ -172,6 +192,7 @@ def run(input_path: Optional[str] = None, *,
         tempo=eff_tempo,
         key=getattr(analysis, "key", "") or "",
         role_counts=dict(rc),
+        raw_notes=list(notes),
     )
 
 

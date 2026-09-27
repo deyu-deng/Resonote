@@ -65,6 +65,13 @@ class AnalysisResult:
     key: str = ""                 # e.g. "C major" / "A minor"
     sections: List[Section] = field(default_factory=list)
     backend: str = "note-based"   # which backend produced this
+    # which detector produced `beats`: "note-onsets" (ours) or "beat_this"
+    # (the waveform). Separate from `backend` because the chord/key machinery
+    # can come from one place and the grid from another.
+    grid_backend: str = "note-onsets"
+    # where bar 1 starts, when something other than the first note says so.
+    # Empty unless an audio-driven tracker supplied it.
+    downbeats: List[float] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -523,7 +530,22 @@ def analyze(notes: Sequence[Note],
     polyphony = _max_simultaneous(notes)
     allow_ext = polyphony > 1
 
+    # The beat grid. From the waveform when a tracker that reads audio is
+    # available; from note onsets otherwise. Preferring the notes is tempting
+    # and wrong: detect_beats() below can only ever agree with the
+    # transcription, so it cannot catch a transcription that drifted, and it
+    # has no way to know where a bar begins.
+    downbeats: List[float] = []
+    grid_backend = "note-onsets"
     beats, tempo = detect_beats(notes)
+    if audio is not None and sr:
+        import beats as _beats
+        got = _beats.detect(audio, int(sr))
+        if got:
+            beats, tempo = got["beats"], got["tempo"]
+            downbeats = got["downbeats"]
+            grid_backend = "beat_this"
+
     bars = _build_bars(beats, max((n.onset + n.duration for n in notes), default=0.0))
     chords = _chord_timeline(notes, bars, allow_extensions=allow_ext)
     # Harmony changes at most once per bar; shorter segments are detection
@@ -546,7 +568,8 @@ def analyze(notes: Sequence[Note],
     sections = _detect_sections(bar_labels, bars)
 
     return AnalysisResult(chords=chords, beats=beats, tempo=tempo,
-                          key=key, sections=sections, backend="note-based")
+                          key=key, sections=sections, backend="note-based",
+                          grid_backend=grid_backend, downbeats=downbeats)
 
 
 # --------------------------------------------------------------------------- #
@@ -621,10 +644,12 @@ def _analyze_madmom(notes: Sequence[Note], audio, sr) -> AnalysisResult:
 # Convenience formatting for CLI / debugging
 # --------------------------------------------------------------------------- #
 def format_summary(a: AnalysisResult) -> str:
+    grid = f" (grid from {a.grid_backend}"
+    grid += f", {len(a.downbeats)} downbeats)" if a.downbeats else ")"
     lines = [f"  backend : {a.backend}",
              f"  key     : {a.key or '(unknown)'}",
              f"  tempo   : {a.tempo:.1f} BPM",
-             f"  beats   : {len(a.beats)}",
+             f"  beats   : {len(a.beats)}{grid}",
              f"  chords  : {len(a.chords)}"]
     if a.chords:
         head = ", ".join(f"{c.label}@{c.start:.1f}s" for c in a.chords[:8])

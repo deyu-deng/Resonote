@@ -48,6 +48,23 @@ from arrangement import is_llm_configured
 import json
 
 
+def _jsonable(o):
+    """The analysis carries numpy scalars (an int64 chord root, a float64
+    confidence) and json refuses them outright, which used to kill the run
+    after every artifact had been computed. The dump exists to be read, so
+    coerce instead of crashing."""
+    import numpy as np
+    if isinstance(o, np.integer):
+        return int(o)
+    if isinstance(o, np.floating):
+        return float(o)
+    if isinstance(o, np.bool_):
+        return bool(o)
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    raise TypeError(f"not JSON serializable: {type(o).__name__}")
+
+
 def _dump_analysis(analysis, dump_dir: str) -> None:
     import os
     os.makedirs(dump_dir, exist_ok=True)
@@ -55,6 +72,8 @@ def _dump_analysis(analysis, dump_dir: str) -> None:
         "backend": analysis.backend,
         "key": analysis.key,
         "tempo": analysis.tempo,
+        "grid_backend": getattr(analysis, "grid_backend", "note-onsets"),
+        "downbeats": getattr(analysis, "downbeats", []),
         "beats": analysis.beats,
         "chords": [
             {"label": c.label, "root": c.root, "quality": c.quality,
@@ -68,7 +87,7 @@ def _dump_analysis(analysis, dump_dir: str) -> None:
     }
     out = os.path.join(dump_dir, "analysis.json")
     with open(out, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
+        json.dump(payload, f, indent=2, ensure_ascii=False, default=_jsonable)
     print(f"[dump] wrote {out}")
 
 
@@ -91,7 +110,7 @@ def _dump_arrangement(notes, analysis, instructions, style, dump_dir,
     }
     out = os.path.join(dump_dir, "arrangement.json")
     with open(out, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
+        json.dump(payload, f, indent=2, ensure_ascii=False, default=_jsonable)
     print(f"[dump] wrote {out}")
 
 
@@ -201,24 +220,6 @@ def main():
     # --- friendly console output ---
     print("[analysis]\n" + res.summary)
 
-    if args.dump_intermediate:
-        from quantize import quantize_notes
-        from transcribe import get_backend, transcribe_audio
-        # reconstruct raw notes for the dump (cheap; only when requested)
-        if args.demo:
-            from tests.make_sample import sample_notes
-            raw_notes = sample_notes()
-        elif is_midi(args.input):
-            raw_notes = get_backend("midi").transcribe(args.input)
-        else:
-            raw_notes = transcribe_audio(args.input,
-                                         use_separation=not args.no_separate,
-                                         amt=args.amt)
-        _dump_analysis(res.analysis, args.dump_intermediate)
-        _dump_arrangement(raw_notes, res.analysis, args.instruction, args.style,
-                          args.dump_intermediate,
-                          backend="llm" if use_llm else "rules")
-
     rc = res.role_counts
     if args.input and is_tab_file(args.input):
         print(f"[import] kept {rc.get('melody', 0)} notes with their original "
@@ -255,6 +256,18 @@ def main():
         print(f"\nWrote MusicXML {args.musicxml}")
     if args.wav:
         print(f"\nWrote preview WAV {args.wav}")
+
+    # Last, and never before the artifacts: the dump is diagnostics, and a
+    # diagnostics failure must not be able to cost the user their score.
+    if args.dump_intermediate:
+        if res.analysis is None:
+            print("\n[dump] skipped: import mode runs no L4/L5, so there is "
+                  "no analysis or arrangement judgment to report")
+        else:
+            _dump_analysis(res.analysis, args.dump_intermediate)
+            _dump_arrangement(res.raw_notes, res.analysis, args.instruction,
+                              args.style, args.dump_intermediate,
+                              backend="llm" if use_llm else "rules")
 
 
 if __name__ == "__main__":
