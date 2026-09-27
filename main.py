@@ -106,6 +106,10 @@ def main():
     ap.add_argument("--pdf", default=None,
                     help="also write a printable tablature PDF (vector, no deps)")
     ap.add_argument("--midi", default=None, help="also write an audible preview .mid (pretty_midi)")
+    ap.add_argument("--musicxml", default=None,
+                    help="also write MusicXML (standard interchange: opens in "
+                         "MuseScore / Finale / Guitar Pro 7 for publication-grade "
+                         "rendering and editing)")
     ap.add_argument("--wav", default=None, help="also write an audible preview .wav (Karplus-Strong synth)")
     ap.add_argument("--demo", action="store_true",
                     help="ignore input, use the built-in sample melody")
@@ -169,6 +173,7 @@ def main():
             wav_path=args.wav,
             html_path=args.html,
             pdf_path=args.pdf,
+            musicxml_path=args.musicxml,
             tempo=args.tempo,
         )
     else:

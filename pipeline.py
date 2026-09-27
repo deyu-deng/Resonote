@@ -171,6 +171,7 @@ def run_import(tab_path: str, *,
                wav_path: Optional[str] = None,
                html_path: Optional[str] = None,
                pdf_path: Optional[str] = None,
+               musicxml_path: Optional[str] = None,
                emit_midi: bool = True,
                emit_wav: bool = True,
                tempo: Optional[float] = None,
@@ -202,6 +203,11 @@ def run_import(tab_path: str, *,
     if pdf_path:
         write_tab_pdf(placed, pdf_path, tempo=score.tempo, title=title,
                       tuning=score.tuning, subtitle=score.tuning_note())
+
+    if musicxml_path:
+        from musicxml_export import write_musicxml
+        write_musicxml(placed, musicxml_path, tempo=score.tempo,
+                       title=title, tuning=score.tuning)
 
     wav_bytes = None
     if emit_wav:
