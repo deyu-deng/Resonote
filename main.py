@@ -34,7 +34,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from pipeline import run, is_midi
+from pipeline import run, run_import, is_midi
+from importers import is_tab_file
 from transcribe import yourmt3_available, basic_pitch_available
 from separate import demucs_available
 from arrangement import is_llm_configured
@@ -126,6 +127,9 @@ def main():
         ap.error("provide an input file or use --demo")
     elif is_midi(args.input):
         print(f"[midi] reading {args.input}")
+    elif is_tab_file(args.input):
+        print(f"[import] reading existing tab {args.input} "
+              f"(fingering preserved, no re-arrangement)")
     else:
         sep_label = "off" if args.no_separate else ("demucs" if demucs_available() else "passthrough")
         amt_label = args.amt
@@ -140,25 +144,36 @@ def main():
     if use_llm and not is_llm_configured():
         ap.error("--llm requested but no LLM provider is configured "
                  "(set RESONOTE_LLM_API_KEY). The rules layer is the fallback.")
-    print(f"[judge] backend={'llm' if use_llm else 'rules'}"
-          + ("" if use_llm or not args.instruction else
-             "  (tip: set RESONOTE_LLM_API_KEY to enable LLM on --instruction)"))
+    if not (args.input and is_tab_file(args.input)):
+        print(f"[judge] backend={'llm' if use_llm else 'rules'}"
+              + ("" if use_llm or not args.instruction else
+                 "  (tip: set RESONOTE_LLM_API_KEY to enable LLM on "
+                 "--instruction)"))
 
-    # --- run the full pipeline (L1 -> L8) ---
-    res = run(
-        args.input,
-        demo=args.demo,
-        tempo=args.tempo,
-        no_separate=args.no_separate,
-        amt=args.amt,
-        style=args.style,
-        instruction=args.instruction,
-        llm=use_llm,
-        gp5_path=args.out,
-        midi_path=args.midi,
-        wav_path=args.wav,
-        html_path=args.html,
-    )
+    # --- run: import an existing tab, or the full audio pipeline (L1 -> L8) ---
+    if args.input and is_tab_file(args.input):
+        res = run_import(
+            args.input,
+            gp5_path=args.out,
+            midi_path=args.midi,
+            wav_path=args.wav,
+            html_path=args.html,
+        )
+    else:
+        res = run(
+            args.input,
+            demo=args.demo,
+            tempo=args.tempo,
+            no_separate=args.no_separate,
+            amt=args.amt,
+            style=args.style,
+            instruction=args.instruction,
+            llm=use_llm,
+            gp5_path=args.out,
+            midi_path=args.midi,
+            wav_path=args.wav,
+            html_path=args.html,
+        )
 
     # --- friendly console output ---
     print("[analysis]\n" + res.summary)
@@ -181,8 +196,12 @@ def main():
                           args.dump_intermediate)
 
     rc = res.role_counts
-    print(f"[arrange] melody={rc.get('melody', 0)}  bass={rc.get('bass', 0)}  "
-          f"harmony={rc.get('harmony', 0)}  (style={args.style})")
+    if args.input and is_tab_file(args.input):
+        print(f"[import] kept {rc.get('melody', 0)} notes with their original "
+              f"fingering (no roles assigned, nothing re-arranged)")
+    else:
+        print(f"[arrange] melody={rc.get('melody', 0)}  bass={rc.get('bass', 0)}  "
+              f"harmony={rc.get('harmony', 0)}  (style={args.style})")
 
     print(f"Wrote {args.out}  ({len(res.placed)} notes, tempo={res.tempo:.1f}BPM)")
     print()

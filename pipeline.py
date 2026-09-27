@@ -160,3 +160,96 @@ def run(input_path: Optional[str] = None, *,
         key=getattr(analysis, "key", "") or "",
         role_counts=dict(rc),
     )
+
+
+def run_import(tab_path: str, *,
+               gp5_path: Optional[str] = None,
+               midi_path: Optional[str] = None,
+               wav_path: Optional[str] = None,
+               html_path: Optional[str] = None,
+               pdf_path: Optional[str] = None,
+               emit_midi: bool = True,
+               emit_wav: bool = True) -> PipelineResult:
+    """Import an existing tab file and re-export it -- no re-arrangement.
+
+    A tab somebody already made is ground truth: we keep the ``string`` /
+    ``fret`` they chose and the tuning of the source track, and skip L1-L7.
+    This is the path for "I bought / downloaded a tab, give me my own PDF".
+    """
+    from importers import load_gp
+    from tab_pdf import write_tab_pdf
+
+    score = load_gp(tab_path)
+    placed = score.placed
+    if not placed:
+        raise ValueError(f"{tab_path}: no notes could be imported")
+
+    gp5_bytes = b""
+    if gp5_path:
+        to_gp5(placed, gp5_path, tempo=score.tempo,
+               title=score.title or "Resonote")
+        gp5_bytes = open(gp5_path, "rb").read()
+
+    if pdf_path:
+        write_tab_pdf(placed, pdf_path, tempo=score.tempo,
+                      title=score.title or score.track_name or "Resonote")
+
+    wav_bytes = None
+    if emit_wav:
+        if wav_path:
+            placed_to_wav(placed, wav_path, tempo=score.tempo)
+            wav_bytes = open(wav_path, "rb").read()
+        else:
+            wav_bytes = _write_to_temp(
+                lambda p: placed_to_wav(placed, p, tempo=score.tempo))
+
+    midi_bytes = None
+    if emit_midi:
+        if midi_path:
+            placed_to_midi(placed, midi_path, tempo=score.tempo)
+            midi_bytes = open(midi_path, "rb").read()
+        else:
+            midi_bytes = _write_to_temp(
+                lambda p: placed_to_midi(placed, p, tempo=score.tempo))
+
+    html_str = html_preview_string(
+        placed, tempo=score.tempo,
+        subtitle=(score.title or "") + (f" · {score.track_name}"
+                                        if score.track_name else ""),
+        audio_src=(os.path.basename(wav_path) if wav_path else None))
+    if html_path:
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_str)
+
+    tuning_note = ""
+    if score.tuning and score.tuning != [64, 59, 55, 50, 45, 40]:
+        names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+        tuning_note = "tuning: " + " ".join(
+            names[p % 12] for p in reversed(score.tuning))
+
+    summary_lines = [
+        f"imported  : {os.path.basename(tab_path)}",
+        f"track     : {score.track_name or '-'}",
+        f"tempo     : {score.tempo:.1f} BPM",
+        f"measures  : {score.measures}",
+        f"notes     : {len(placed)}",
+    ]
+    if tuning_note:
+        summary_lines.append(tuning_note)
+    for w in score.warnings:
+        summary_lines.append(f"! {w}")
+    summary_lines.append("mode      : import (fingering preserved, no re-arrangement)")
+
+    return PipelineResult(
+        placed=placed,
+        analysis=None,
+        summary="\n".join(summary_lines),
+        ascii_tab=ascii_tab(placed, tempo=score.tempo),
+        html_preview=html_str,
+        gp5_bytes=gp5_bytes,
+        wav_bytes=wav_bytes,
+        midi_bytes=midi_bytes,
+        tempo=float(score.tempo),
+        key="",
+        role_counts={"melody": len(placed)},
+    )
