@@ -1,11 +1,30 @@
-"""独立核验 out.melody.gp5 的可弹性 — 不依赖管线自己的说法。"""
-import sys
-sys.path.insert(0, '/Users/ciel/Projects/Resonote')
+"""独立核验一份 GP5 产物的可弹性 — 不依赖管线自己的说法。
 
-from collections import defaultdict
+用法:  python experiments/verify_playability.py [产物.gp5]
+不给参数时核验 runs/ 下最近生成的那份 .gp5。
+"""
+import glob
+import os
+import sys
+from collections import Counter, defaultdict
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
 from importers import load_tab
 
-s = load_tab('/Users/ciel/Projects/Resonote/out.melody.gp5')
+
+def _newest_gp5() -> str:
+    candidates = sorted(glob.glob(os.path.join(ROOT, "runs", "*", "*.gp5")),
+                        key=os.path.getmtime)
+    if not candidates:
+        raise SystemExit("no .gp5 under runs/ — give a path as argv[1]")
+    return candidates[-1]
+
+
+path = sys.argv[1] if len(sys.argv) > 1 else _newest_gp5()
+print(f"核验: {os.path.relpath(path, ROOT)}")
+s = load_tab(path)
 placed = s.placed
 print('GP5 回读: %d 音, %d 小节, tempo %.1f' % (len(placed), s.measures, s.tempo))
 
@@ -16,7 +35,6 @@ for p in placed:
     buckets[round(p.onset / step) * step].append(p)
 
 counts = [len(v) for v in buckets.values()]
-from collections import Counter
 print('同一时刻音数分布:', dict(sorted(Counter(counts).items())))
 print('最大同时音数:', max(counts))
 

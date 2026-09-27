@@ -48,7 +48,6 @@ def test_roundtrip():
 
     print("OK: arranged", len(placed), "notes; .gp5 written and re-read cleanly.")
     print(ascii_tab(placed))
-    return True
 
 
 if __name__ == "__main__":

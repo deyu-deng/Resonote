@@ -1,0 +1,10 @@
+{
+  "name": "resonote-alphatab-tools",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Independent verification + conversion helpers for Resonote exports, built on alphaTab (MPL-2.0). These live in the repo on purpose: the 'file generated != file playable' checks must not depend on a scratch directory outside the project.",
+  "type": "module",
+  "dependencies": {
+    "@coderline/alphatab": "^1.8.4"
+  }
+}

@@ -5,7 +5,7 @@
 - **输入**：mp3/wav 音频、MIDI、Guitar Pro 3/4/5（.gp3/.gp4/.gp5/.gtp）、ASCII 文本谱（.txt/.tab）
 - **输出**：`.gp5`（编辑）、`.musicxml`（标准交换）、MIDI、WAV 试听、HTML 预览、简易 PDF
 - **核心思路**：好谱子是**减法**——分离出主旋律 + 低音支撑 + 少量和声点缀，而不是复刻整曲音频
-- 测试：**176 个**（`pytest tests/`）
+- 测试：**181 个**（`pytest tests/`）
 
 ---
 
@@ -127,17 +127,24 @@ LLM edit: drop harmony = 1.06（为了突出主旋律，和声应点缀少而精
 
 ```bash
 # 1. 全量测试
-.venv/bin/python -m pytest tests/ -q          # 176 个
+.venv/bin/python -m pytest tests/ -q          # 181 个
 
 # 2. 可弹性核验（同时音数 / 品位跨度——人手只有 4-5 品）
-.venv/bin/python experiments/verify_playability.py
+.venv/bin/python experiments/verify_playability.py [产物.gp5]   # 默认取 runs/ 下最新
 
-# 3. 独立实现交叉校验（不信 pyguitarpro 自己）
-cd /Users/ciel/.workbuddy/binaries/node/workspace && \
-  node verify_alphatab.mjs <产物.gp5>        # alphaTab（MPL-2.0）独立解析
+# 3. 独立实现交叉校验（不信 pyguitarpro 自己），gp5 / gp / musicxml / mid 通用
+cd tools/alphatab && npm install              # 一次性，13MB，无传递依赖
+node tools/alphatab/verify-score.mjs <产物文件>
 ```
 
-合格的《Melody》基线（分离开启）：同时最多 **4** 音（=拨弦上限）、品位跨度平均 **3.8**、超 5 品占比 19%、0 空拍、0 同弦冲突。
+**两个 reader 必须给出同一组数字。** `verify-score.mjs`（alphaTab）与
+`verify_playability.py`（我们的 import 通路）从不同实现读同一份产物，若音数 /
+同时音数 / 品位跨度不一致，说明其中一方的时间轴或延音链有问题——2026-09-27 就是
+靠这个抓到 MusicXML 的 `<duration>` 与 `<type>` 不自洽（见 §6）。
+
+合格的《Melody》基线（分离开启）：1160 音 / 104 小节、同时最多 **4** 音（=拨弦上限）、
+品位跨度平均 **3.8**、超 5 品占比 19%、0 空拍、0 同弦冲突；GP5 与 MusicXML 两条
+通路读出的攻击数一致（1160）。
 
 ---
 
@@ -153,6 +160,8 @@ cd /Users/ciel/.workbuddy/binaries/node/workspace && \
 8. **密钥只在 `.env`**（已 gitignore）。提交前 `git diff --cached | grep -i key` 自查。
 9. **`fixtures/` 整体 gitignore**：真实谱子有版权，绝不进公开仓库。
 10. 沙箱/CI 环境：后台跑 basic_pitch 可能被杀（沙箱删除钩子无法确认），**长任务用前台**；exit 137 既可能是内存也可能是死循环，先查循环。
+11. **MusicXML 一律「每弦一 voice」，不要回到单 voice + `<backup>`**。一根弦不可能同时发两音，所以每根弦就是一条线性时间线；单 voice 交织写法会被 alphaTab 直接拒绝（`Unsupported forward/backup detected`，实测 92 处），排版器也会错置。声部号**恒等于弦号**且全曲稳定——按「本小节第几个活跃弦」编号会让延音链跨声部断裂。
+12. **`<duration>` 与 `<type>` 必须自洽**：5 个八分音符不是一个符值，得写成「二分 + 连八分」。读者按 `<type>` 排版、按 `<duration>` 计时，两者不一致时该声部后续全部漂移。小节线处同理——用 `<tie>`/`<tied>` 续写，别切断（切断=把持续音重新拨响）。
 
 ---
 
@@ -161,7 +170,7 @@ cd /Users/ciel/.workbuddy/binaries/node/workspace && \
 ```
 main.py           CLI 入口
 pipeline.py       管线编排（run / run_import）
-transcribe.py     L3 转写（MIDI / basic-pitch / YourMT3+）
+transcribe.py     L3 转写（MIDI / basic-pitch；YourMT3+ 已死路，见 §8 P5）
 separate.py       L2 分离（demucs；soundfile 读音频）
 analysis.py       L4 乐理
 arrangement.py    L5 编曲 + LLM 判断层 + load_env_file
@@ -176,10 +185,12 @@ importers.py      GP3/4/5 + ASCII 文本谱导入
 models.py         Note / PlacedNote / STANDARD_TUNING / tuning_labels
 web_server.py     Web 后端
 web/              前端（alphaTab 渲染）
-tests/            176 个测试（test_m1..m15 编号按里程碑）
+tests/            181 个测试（test_m1..m15 编号按里程碑）
 experiments/      OMR 原型 / GP7 转换 / 可弹性核验 / 两进程分离流程
+tools/alphatab/   alphaTab 独立校验器（node，npm install 后直接用，见 §5）
 samples/          自造示例谱（可提交）
 fixtures/         真实谱子测试集（gitignore，版权原因，仅本地）
+runs/             每次跑出来的产物按日期归档（gitignore），仓库根目录只放源码
 ```
 
 ---
@@ -194,14 +205,16 @@ fixtures/         真实谱子测试集（gitignore，版权原因，仅本地�
 |---|---|---|
 | P0 | 建 eval 集 | 「音频 + 权威谱」配对 2-3 首，量化四条 done（音准/节奏/指法/和声）。没有它一切优化无度量 |
 | P1 | ✅ 分离 | torchaudio 已装，demucs 全链路已通 |
-| P2 | 换 FluidSynth 真音色 | `brew install fluidsynth` + SoundFont，替换 Karplus-Strong，听感质变 |
-| P3 | madmom 换 L4 节拍/和弦 | 现在和弦从音符反推（弱）；madmom 是 SOTA |
-| P4 | `place_bass` 选八度参考旋律把位 | 消掉剩余 19% 超 5 品段落 |
-| P5 | 技法记号（H/P/击勾弦） | 纯规则可做：同弦相邻音 + 时序重叠 → hammer-on |
-| P6 | MuseScore 集成 | 检测到 `mscore` 则自动出出版级 PDF |
-| P7 | OMR 符号识别 | 模板匹配/小模型，节奏在符干+横梁里 |
+| P2 | 换真音色渲染 | `brew install fluid-synth`（2.6.1，bottle 秒装）+ GeneralUser GS 音色库，替换 Karplus-Strong |
+| P3 | 出版级排版 | **不要自己画 PDF**。`brew install --cask musescore`（4.7.5，约 200MB）后 `mscore -F -s -o out.pdf` 直接吃我们的 `.gp5`/`.musicxml`；和弦框/Nashville 格这类 MuseScore 弱项再上 LilyPond（39MB，`TabStaff`+`FretBoards`+`ChordGrid` 都是一等公民）。alphaTab 只做屏显与校验，它没有分页，结构上不适合印刷 |
+| P4 | 节拍/和弦检测 | **madmom 不要碰**：PyPI 最后一版 0.16.1（2018），3.10+ 装不上，许可证暧昧。改用 `beat_this`（MIT，官方有 CPU 路径）+ ChordMini（MIT，权重在仓库里）；`all-in-one` 也已停更 |
+| P5 | 转写换代 | basic_pitch 在整曲混音上 F1≈0.43；2026 年可选 MuScriptor（代码 MIT，权重 CC BY-NC）。**先确认可商用性再换**。分离侧 demucs 上游已归档，MSST/BS-RoFormer 或 `mlx-audio-separator`（MLX，M 芯片最快）是后路 |
+| P6 | `place_bass` 选八度参考旋律把位 | 消掉剩余 19% 超 5 品段落 |
+| P7 | 技法记号（H/P/击勾弦） | 纯规则可做：同弦相邻音 + 时序重叠 → hammer-on。alphaTab 的 MusicXML 侧 bend/slide/hammer 都支持 |
+| P8 | 单乐器改走 f0 | 人声/贝斯是近单音的，用 RMVPE/PiENet 的 f0 比把 basic_pitch 硬套在 stem 上准得多 |
+| P9 | OMR 符号识别 | 模板匹配/小模型，节奏在符干+横梁里。**尺寸必须从检测到的谱线间距推导**，现在整套阈值是在大树音乐屋单一来源上调出来的 |
 
-**未解决**：整曲混音转写 F1≈0.43（clean 单乐器才好）；Web 无鉴权；`style.css` vs `styles.css` 疑似重复待清理。
+**未解决**：整曲混音转写 F1≈0.43（clean 单乐器才好；2026 的客观基线是流行多轨 onset F1 仅 ~29%，所以「全自动直出」的天花板由 L3 决定）；Web 无鉴权；Python 3.11 本身正在变成约束（librosa 1.0 与 abjad 3.31 都要 ≥3.12）。
 
 ---
 

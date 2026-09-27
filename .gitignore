@@ -5,6 +5,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Node helper tooling (tools/alphatab) — deps are re-installable
+node_modules/
+
 # Secrets — NEVER commit (LLM provider keys etc.)
 .env
 .env.*
@@ -12,8 +15,10 @@ __pycache__/
 *.env.local
 !.env.example
 
-# Generated artifacts (tabs/previews written by a run)
+# Generated artifacts (tabs/previews written by a run). Run outputs are
+# archived under runs/<date>/ so the repo root stays source-only.
 out.*
+runs/
 dump_*/
 
 # Web runtime output
