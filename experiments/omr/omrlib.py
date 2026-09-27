@@ -8,12 +8,14 @@ def read_bmp(path):
     off = struct.unpack('<I', d[10:14])[0]
     w, h = struct.unpack('<ii', d[18:26])
     bpp = struct.unpack('<H', d[28:30])[0]
-    assert bpp == 24 and struct.unpack('<I', d[30:34])[0] == 0, 'need 24bpp'
-    rowsz = ((w * 3 + 3) // 4) * 4
+    assert bpp in (24, 32) and struct.unpack('<I', d[30:34])[0] == 0, \
+        'need uncompressed 24/32bpp'
+    ch = bpp // 8
+    rowsz = ((w * ch + 3) // 4) * 4
     topdown = h > 0
     h = abs(h)
     arr = np.frombuffer(d[off:off + rowsz * h], dtype=np.uint8).reshape(h, rowsz)
-    arr = arr[:, :w * 3].reshape(h, w, 3)[:, :, ::-1]
+    arr = arr[:, :w * ch].reshape(h, w, ch)[:, :, :3][:, :, ::-1]
     return np.ascontiguousarray(arr if topdown else arr[::-1])
 
 
