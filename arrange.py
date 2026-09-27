@@ -201,16 +201,67 @@ def enforce_playability(placed: List[PlacedNote], tempo: float,
 
     drop = set()
     for grp in buckets.values():
-        frets = [p.fret for p in grp]
-        while len(grp) > 1 and max(frets) - min(frets) > max_span:
-            victims = [p for p in grp if p.role == "harmony"]
-            if not victims:
+
+        def _fretted(g):
+            # open strings cost no finger, so they do not constrain where the
+            # hand sits: an open bass under a fret-12 melody is a normal
+            # fingerstyle figure, not a stretch
+            return [p.fret for p in g if p.fret > 0]
+
+        fretted = _fretted(grp)
+        # bounded: every move strictly narrows the span and every drop removes
+        # a note, so this terminates -- the cap is a guard against a future
+        # edit wedging the whole pipeline in an endless loop
+        for _guard in range(256):
+            if len(fretted) <= 1 or max(fretted) - min(fretted) <= max_span:
+                break
+            lo, hi = min(fretted), max(fretted)
+
+            # 1) re-voice: the same pitch is usually reachable in several
+            #    places, so try moving a bass/harmony note to a position that
+            #    narrows the span. Keeping the embellishment beats dropping
+            #    it, and a root on string 5 fret 3 sounds identical to one on
+            #    string 6 fret 8.
+            best = None                     # (new_span, note, string, fret)
+            for v in [p for p in grp if p.role in ("bass", "harmony")]:
+                rest = [q.fret for q in grp if q is not v and q.fret > 0]
+                if not rest:
+                    continue
+                rlo, rhi = min(rest), max(rest)
+                tlo, thi = max(0, rhi - max_span), rlo + max_span
+                used = {q.string for q in grp if q is not v}
+                for s, f in candidate_positions(v.pitch):
+                    if s in used or not (tlo <= f <= thi):
+                        continue
+                    ns = max(rhi, f) - min(rlo, f)
+                    # ties prefer the lower position: easier to reach, and
+                    # what a player would actually choose
+                    if best is None or (ns, f) < (best[0], best[3]):
+                        best = (ns, v, s, f)
+            if best is not None and best[0] < hi - lo:
+                _ns, v, s, f = best
+                v.string, v.fret = s, f
+                fretted = _fretted(grp)      # the move changed the hand span
+                continue
+
+            # 2) otherwise subtract: drop whichever harmony note leaves the
+            #    narrowest span behind, high positions first on ties. Melody
+            #    and bass are never dropped.
+            harm = [p for p in grp if p.role == "harmony" and p.fret > 0]
+            if not harm:
                 break                          # melody/bass only: keep as is
-            med = sorted(frets)[len(frets) // 2]
-            victim = max(victims, key=lambda p: abs(p.fret - med))
+
+            def _span_without(v):
+                rest = [q.fret for q in grp if q is not v and q.fret > 0]
+                return (max(rest) - min(rest)) if len(rest) > 1 else 0
+
+            victim = min(harm, key=lambda p: (_span_without(p), -p.fret))
+            if _span_without(victim) >= hi - lo:
+                break          # the stretch is melody-vs-bass: dropping the
+                               # embellishment cannot fix it, so keep it
             grp.remove(victim)
             drop.add(id(victim))
-            frets = [p.fret for p in grp]
+            fretted = _fretted(grp)
 
     if not drop:
         return placed
@@ -280,7 +331,8 @@ def arrange(notes,
     placed += accomp
 
     placed.sort(key=lambda p: (round(p.onset, 4), p.pitch))
-    placed = _resolve_string_collisions(placed)
 
+    # span first (it may re-voice notes across strings), then de-dupe strings
     tempo = float(getattr(analysis, "tempo", 0) or 0)
-    return enforce_playability(placed, tempo)
+    placed = enforce_playability(placed, tempo)
+    return _resolve_string_collisions(placed)

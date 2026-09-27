@@ -149,6 +149,15 @@ def _grid(placed: Sequence[PlacedNote], tempo: float, slots_per_measure: int):
     return items, n_measures * slots_per_measure
 
 
+def _beam(pdf: "_Pdf", group: list, y: float) -> None:
+    """One thick beam across a group of beamed eighth notes."""
+    if len(group) < 2:
+        return
+    x0 = min(cx for _g, cx in group)
+    x1 = max(cx for _g, cx in group)
+    pdf.line(x0, y, x1, y, 1.8)
+
+
 def write_tab_pdf(placed: Sequence[PlacedNote],
                   out_path: str,
                   tempo: float = 120.0,
@@ -173,9 +182,10 @@ def write_tab_pdf(placed: Sequence[PlacedNote],
     gutter = 20.0                      # room for the E/A/D/G/B/e labels
     line_gap = 11.0                    # spacing between the 6 staff lines
     staff_h = line_gap * 5
-    num_h = 14.0                       # measure-number row
+    num_h = 26.0                       # measure numbers + rhythm stems above
     sys_gap = 26.0
     sys_h = staff_h + num_h + sys_gap
+    rhythm_h = 14.0                    # stem height above the top staff line
 
     usable_w = pw - 2 * margin - gutter
     measure_w = slots_per_measure * slot_width
@@ -226,6 +236,42 @@ def write_tab_pdf(placed: Sequence[PlacedNote],
         for m in range(n):
             mx = x0 + m * measure_w + 2
             pdf.text(mx, top + 4, str(first + m + 1), size=7)
+
+        # --- rhythm stems + beams, above the staff ------------------------
+        # This is what makes the page read as music instead of a table of
+        # numbers: you can read the timing without counting grid cells.
+        # Notated duration = how long the note rings, but never across the
+        # next attack (that would draw two rhythms on top of each other).
+        atk = {}                       # attack slot -> longest note there
+        for (s, length, _p) in items:
+            atk[s] = max(atk.get(s, 0), length)
+        order = sorted(atk)
+        nxt = {s: (order[i + 1] if i + 1 < len(order) else total)
+               for i, s in enumerate(order)}
+
+        stem_x, eighth_x = {}, []
+        for g in order:
+            if not (first * slots_per_measure <= g < last * slots_per_measure):
+                continue
+            m, slot = divmod(g, slots_per_measure)
+            cx = x0 + m * measure_w + slot * slot_width + slot_width / 2.0
+            dur = min(atk[g], nxt[g] - g)
+            y0 = top + 6.0
+            pdf.line(cx, top + 1.0, cx, y0 + rhythm_h, 0.9)
+            stem_x[g] = cx
+            if dur <= 1:
+                eighth_x.append((g, cx))
+
+        # beam consecutive eighth notes, max 4 per group (half a measure)
+        group: list = []
+        for g, cx in eighth_x:
+            if group and g != group[-1][0] + 1:
+                _beam(pdf, group, top + 6.0 + rhythm_h)
+                group = []
+            group.append((g, cx))
+        if group:
+            _beam(pdf, group, top + 6.0 + rhythm_h)
+
         # frets
         for m in range(n):
             base = first + m
