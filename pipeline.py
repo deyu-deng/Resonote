@@ -76,6 +76,7 @@ def run(input_path: Optional[str] = None, *,
         midi_path: Optional[str] = None,
         wav_path: Optional[str] = None,
         html_path: Optional[str] = None,
+        musicxml_path: Optional[str] = None,
         emit_midi: bool = True,
         emit_wav: bool = True) -> PipelineResult:
     """Run the full pipeline and return a :class:`PipelineResult`.
@@ -121,6 +122,15 @@ def run(input_path: Optional[str] = None, *,
     else:
         gp5_bytes = _write_to_temp(
             lambda p: to_gp5(placed, p, tempo=eff_tempo, anchor=anchor))
+
+    if musicxml_path:
+        from musicxml_export import write_musicxml
+        write_musicxml(
+            placed, musicxml_path, tempo=eff_tempo,
+            title=(os.path.splitext(os.path.basename(input_path))[0]
+                   if input_path else "Resonote"))
+
+    wav_bytes = None
 
     wav_bytes = None
     if emit_wav:

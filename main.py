@@ -195,6 +195,7 @@ def main():
             midi_path=args.midi,
             wav_path=args.wav,
             html_path=args.html,
+            musicxml_path=args.musicxml,
         )
 
     # --- friendly console output ---
@@ -242,6 +243,8 @@ def main():
         print(f"\nWrote tablature PDF {args.pdf}")
     if args.midi:
         print(f"\nWrote preview MIDI {args.midi}")
+    if args.musicxml:
+        print(f"\nWrote MusicXML {args.musicxml}")
     if args.wav:
         print(f"\nWrote preview WAV {args.wav}")
 
