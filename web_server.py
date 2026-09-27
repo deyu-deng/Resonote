@@ -190,6 +190,9 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
 
 def main():
     import argparse
+    from arrangement import load_env_file
+    load_env_file()          # .env -> os.environ, so the LLM layer can engage
+
     ap = argparse.ArgumentParser(description="Resonote web server")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)

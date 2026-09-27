@@ -36,12 +36,15 @@ def test_is_llm_configured_env():
 
 
 # --- no provider -> clear error, never fake ------------------------------ #
-def test_judge_llm_without_key_raises():
+def test_judge_llm_without_key_falls_back_to_rules():
+    """No key -> the run must still produce a tab, and must SAY the LLM did
+    not participate. Silently degrading was the M7 bug that kept the LLM
+    invisible."""
     arr = _arr("rules")
     with patch.dict(arrangement.os.environ, {}, clear=True):
-        with pytest.raises(RuntimeError) as ei:
-            judge(arr, "make it fuller", backend="llm")
-    assert "RESONOTE_LLM_API_KEY" in str(ei.value)
+        out = judge(arr, "make it fuller", backend="llm")
+    assert any("LLM" in e and "RULES" in e for e in out.judgment_log), \
+        out.judgment_log
 
 
 # --- injected fn path ---------------------------------------------------- #

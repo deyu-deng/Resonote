@@ -358,6 +358,37 @@ class LLMJudgmentLayer:
 # --------------------------------------------------------------------------- #
 # LLM client adapter (OpenAI-compatible, env-configured, zero extra deps)
 # --------------------------------------------------------------------------- #
+def load_env_file(path: Optional[str] = None) -> dict:
+    """Populate os.environ from a ``.env`` file (KEY=VALUE lines).
+
+    Without this the LLM layer could never engage: is_llm_configured() reads
+    the process environment, and a .env sitting next to the code is not part
+    of it until something loads it. Variables already set in the environment
+    win, so a shell export still overrides the file.
+
+    Returns the variables that were actually set (empty if the file is
+    missing).
+    """
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    loaded: dict = {}
+    if not os.path.exists(path):
+        return loaded
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if not key or key in os.environ:
+                continue
+            os.environ[key] = value
+            loaded[key] = value
+    return loaded
+
+
 def is_llm_configured() -> bool:
     """True if a provider API key is present in the environment."""
     return bool(os.environ.get("RESONOTE_LLM_API_KEY"))
@@ -584,9 +615,28 @@ def judge(arr: Arrangement, instructions: str = "", backend: str = "auto") -> Ar
         arr.judgment_log.append("judged by RULES layer")
         return _apply_edits(arr, edits)
     if backend == "llm":
-        layer = LLMJudgmentLayer(llm_fn=make_llm_fn())
-        edits = _sanitize_edits(layer.review(arr, instructions), arr)
+        try:
+            layer = LLMJudgmentLayer(llm_fn=make_llm_fn())
+            edits = _sanitize_edits(layer.review(arr, instructions), arr)
+        except Exception as e:      # provider down / bad JSON / bad shape
+            # graceful degradation: the user still gets a tab, but must SEE
+            # that the LLM did not participate this run
+            arr.judgment_log.append(
+                f"LLM layer FAILED ({type(e).__name__}: {e}) -> fell back to "
+                f"RULES")
+            edits = _rule_judge(arr, instructions)
+            arr.judgment_log.append("judged by RULES layer (LLM fallback)")
+            return _apply_edits(arr, edits)
         arr.judgment_log.append("judged by LLM layer")
+        for e in edits:             # the LLM's decisions must be inspectable
+            line = f"LLM edit: {e.op}"
+            if e.target:
+                line += f" {e.target}"
+            if e.value is not None:
+                line += f" = {e.value}"
+            if e.reason:
+                line += f" ({e.reason})"
+            arr.judgment_log.append(line)
         return _apply_edits(arr, edits)
     raise ValueError(f"unknown judgment backend: {backend!r}")
 

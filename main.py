@@ -72,9 +72,11 @@ def _dump_analysis(analysis, dump_dir: str) -> None:
     print(f"[dump] wrote {out}")
 
 
-def _dump_arrangement(notes, analysis, instructions, style, dump_dir):
+def _dump_arrangement(notes, analysis, instructions, style, dump_dir,
+                      backend="auto"):
     from arrangement import build_arrangement
-    arr = build_arrangement(notes, analysis, instructions, "auto", style)
+    # same judgment backend as the real run, or the dump misrepresents it
+    arr = build_arrangement(notes, analysis, instructions, backend, style)
     payload = {
         "key": arr.key,
         "tempo": arr.tempo,
@@ -94,6 +96,9 @@ def _dump_arrangement(notes, analysis, instructions, style, dump_dir):
 
 
 def main():
+    from arrangement import load_env_file
+    load_env_file()          # .env -> os.environ, so the LLM layer can engage
+
     ap = argparse.ArgumentParser(
         description="Resonote: turn a melody into a fingerstyle guitar .gp5 tab")
     ap.add_argument("input", nargs="?", help="audio (.mp3/.wav) or MIDI (.mid/.midi)")
@@ -210,7 +215,8 @@ def main():
                                          amt=args.amt)
         _dump_analysis(res.analysis, args.dump_intermediate)
         _dump_arrangement(raw_notes, res.analysis, args.instruction, args.style,
-                          args.dump_intermediate)
+                          args.dump_intermediate,
+                          backend="llm" if use_llm else "rules")
 
     rc = res.role_counts
     if args.input and is_tab_file(args.input):
