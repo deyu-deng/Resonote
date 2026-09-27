@@ -606,37 +606,78 @@ def cap_concurrent_plucks(arr: Arrangement,
     return arr
 
 
-def judge(arr: Arrangement, instructions: str = "", backend: str = "auto") -> Arrangement:
-    """Run the judgment layer. backend: 'auto' | 'rules' | 'llm'."""
+def _log_edits(arr: Arrangement, edits: List[Edit], prefix: str) -> None:
+    """Every judgment must be inspectable, whoever made it: the rules layer, a
+    provider's LLM and an external reviewer all report through here."""
+    for e in edits:
+        line = f"{prefix}: {e.op}"
+        if e.target:
+            line += f" {e.target}"
+        if e.value is not None:
+            line += f" = {e.value}"
+        if e.reason:
+            line += f" ({e.reason})"
+        arr.judgment_log.append(line)
+
+
+def make_file_fn(path: str) -> Callable[[str], List[Edit]]:
+    """An 'LLM' that is really a reviewed file of edits.
+
+    Same contract as make_llm_fn() and the same tolerant parser, so the prompt
+    it answers, the guardrails in _sanitize_edits() and the logging are shared
+    rather than reimplemented. Lets a judgment be produced by a human, by this
+    agent, or by any model without an API key in the loop -- and keeps the
+    decision as a reviewable artifact next to the score.
+    """
+    def fn(prompt: str) -> List[Edit]:
+        if not os.path.exists(path):
+            raise RuntimeError(f"judgment file not found: {path}")
+        with open(path, encoding="utf-8") as f:
+            return _parse_edits(f.read())
+    return fn
+
+
+def judge(arr: Arrangement, instructions: str = "", backend: str = "auto",
+          edits_file: str = "") -> Arrangement:
+    """Run the judgment layer. backend: 'auto' | 'rules' | 'llm' | 'file'.
+
+    'llm' and 'file' are LAYERED on top of the rules, not a replacement for
+    them. The rules encode physical pruning (drop low-velocity harmony, respect
+    the pluck cap); a reviewer expresses intent. Measured before this was
+    arranged: asking a reviewer for a *lighter* arrangement produced 199 notes
+    against the rules' 189, because choosing the reviewer had skipped the rules
+    layer and its 11 harmony drops with it. Intent on top of a playable
+    baseline; never instead of it.
+    """
     if backend == "auto":
         backend = "rules"   # rules is the always-available fallback
     if backend == "rules":
         edits = _rule_judge(arr, instructions)
         arr.judgment_log.append("judged by RULES layer")
         return _apply_edits(arr, edits)
-    if backend == "llm":
+    if backend in ("file", "llm"):
+        base = _rule_judge(arr, instructions)
+        arr.judgment_log.append("judged by RULES layer (baseline)")
+        _log_edits(arr, base, "rules edit")
+        arr = _apply_edits(arr, base)
+        if backend == "file":
+            fn = make_file_fn(edits_file)
+            src = os.path.basename(edits_file)
+        else:
+            fn = make_llm_fn()
+            src = "LLM"
         try:
-            layer = LLMJudgmentLayer(llm_fn=make_llm_fn())
-            edits = _sanitize_edits(layer.review(arr, instructions), arr)
-        except Exception as e:      # provider down / bad JSON / bad shape
+            edits = _sanitize_edits(
+                LLMJudgmentLayer(llm_fn=fn).review(arr, instructions), arr)
+        except Exception as e:      # provider down / bad JSON / bad file
             # graceful degradation: the user still gets a tab, but must SEE
-            # that the LLM did not participate this run
+            # that the reviewer did not participate this run
             arr.judgment_log.append(
-                f"LLM layer FAILED ({type(e).__name__}: {e}) -> fell back to "
-                f"RULES")
-            edits = _rule_judge(arr, instructions)
-            arr.judgment_log.append("judged by RULES layer (LLM fallback)")
-            return _apply_edits(arr, edits)
-        arr.judgment_log.append("judged by LLM layer")
-        for e in edits:             # the LLM's decisions must be inspectable
-            line = f"LLM edit: {e.op}"
-            if e.target:
-                line += f" {e.target}"
-            if e.value is not None:
-                line += f" = {e.value}"
-            if e.reason:
-                line += f" ({e.reason})"
-            arr.judgment_log.append(line)
+                f"{src} reviewer FAILED ({type(e).__name__}: {e}) -> shipped "
+                f"the RULES baseline only")
+            return arr
+        arr.judgment_log.append(f"judged by {src} reviewer, on top of rules")
+        _log_edits(arr, edits, f"{src} edit")
         return _apply_edits(arr, edits)
     raise ValueError(f"unknown judgment backend: {backend!r}")
 
@@ -648,12 +689,13 @@ def build_arrangement(notes: Sequence[Note],
                       analysis: Optional[AnalysisResult] = None,
                       instructions: str = "",
                       judge_backend: str = "auto",
-                      style: str = "fingerstyle") -> Arrangement:
+                      style: str = "fingerstyle",
+                      edits_file: str = "") -> Arrangement:
     """assign_roles -> voice -> judge. Produces the final Arrangement."""
     arr = assign_roles(notes, analysis)
     arr.style = style
     arr = voice(arr)
-    arr = judge(arr, instructions, judge_backend)
+    arr = judge(arr, instructions, judge_backend, edits_file=edits_file)
     arr = cap_concurrent_plucks(arr)
     return arr
 

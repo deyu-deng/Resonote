@@ -321,7 +321,8 @@ def arrange(notes,
             instructions: str = "",
             judge_backend: str = "auto",
             style: str = "fingerstyle",
-            llm: bool = False) -> List[PlacedNote]:
+            llm: bool = False,
+            edits_file: str = "") -> List[PlacedNote]:
     """Build the L5 arrangement, then finger every role.
 
     With ``analysis=None`` (or a bare melody), only the melody is fingered —
@@ -330,14 +331,16 @@ def arrange(notes,
 
     ``llm=True`` routes the judgment layer through a real LLM (requires an
     OpenAI-compatible provider configured via env). Falls back to ``judge_backend``
-    otherwise.
+    otherwise. ``edits_file`` takes precedence and routes judgment through an
+    externally reviewed file of edits (see arrangement.make_file_fn).
     """
     notes = list(notes)
     if not notes:
         return []
 
-    backend = "llm" if llm else judge_backend
-    arr = build_arrangement(notes, analysis, instructions, backend, style)
+    backend = "file" if edits_file else ("llm" if llm else judge_backend)
+    arr = build_arrangement(notes, analysis, instructions, backend, style,
+                            edits_file=edits_file)
 
     # Finger the accompaniment FIRST so we know which strings it occupies,
     # then keep the melody off those strings at overlapping instants.

@@ -94,6 +94,7 @@ def run(input_path: Optional[str] = None, *,
         wav_path: Optional[str] = None,
         html_path: Optional[str] = None,
         musicxml_path: Optional[str] = None,
+        judgment_file: Optional[str] = None,
         emit_midi: bool = True,
         emit_wav: bool = True) -> PipelineResult:
     """Run the full pipeline and return a :class:`PipelineResult`.
@@ -130,7 +131,8 @@ def run(input_path: Optional[str] = None, *,
 
     # L5/L6 — arrange + finger (role assignment, voicing, fingering)
     placed = arrange(qnotes, analysis=analysis,
-                     instructions=instruction, style=style, llm=llm)
+                     instructions=instruction, style=style, llm=llm,
+                     edits_file=judgment_file or "")
     placed = quantize_placed(placed, analysis, subdivision=2)  # idempotent net
 
     anchor = analysis.beats[0] if analysis.beats else 0.0

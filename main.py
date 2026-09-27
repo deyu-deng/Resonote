@@ -92,10 +92,12 @@ def _dump_analysis(analysis, dump_dir: str) -> None:
 
 
 def _dump_arrangement(notes, analysis, instructions, style, dump_dir,
-                      backend="auto"):
+                      backend="auto", edits_file=""):
     from arrangement import build_arrangement
-    # same judgment backend as the real run, or the dump misrepresents it
-    arr = build_arrangement(notes, analysis, instructions, backend, style)
+    # same judgment backend AND the same reviewer file as the real run, or the
+    # dump describes a run that never happened
+    arr = build_arrangement(notes, analysis, instructions, backend, style,
+                            edits_file=edits_file)
     payload = {
         "key": arr.key,
         "tempo": arr.tempo,
@@ -154,6 +156,14 @@ def main():
                          "rules skeleton. Requires RESONOTE_LLM_API_KEY (OpenAI-compatible "
                          "endpoint). When --instruction is given and an LLM is configured, "
                          "the LLM is auto-used even without this flag.")
+    ap.add_argument("--judgment", metavar="FILE", default=None,
+                    help="answer the L5 judgment layer from FILE (a JSON list of "
+                         "{op,target,value,reason} edits) instead of calling a model. "
+                         "Use with --emit-prompt to see what is being answered. Lets a "
+                         "human, or an agent, be the reviewer with no API key involved.")
+    ap.add_argument("--emit-prompt", metavar="FILE", default=None,
+                    help="write the exact prompt the L5 judgment layer would send, so it "
+                         "can be answered out of band and fed back with --judgment")
     args = ap.parse_args()
 
     # --- figure out the input mode (for friendly console output) ---
@@ -182,9 +192,13 @@ def main():
     if use_llm and not is_llm_configured():
         ap.error("--llm requested but no LLM provider is configured "
                  "(set RESONOTE_LLM_API_KEY). The rules layer is the fallback.")
+    if args.judgment and not os.path.exists(args.judgment):
+        ap.error(f"--judgment {args.judgment}: file does not exist")
     if not (args.input and is_tab_file(args.input)):
-        print(f"[judge] backend={'llm' if use_llm else 'rules'}"
-              + ("" if use_llm or not args.instruction else
+        label = "file" if args.judgment else ("llm" if use_llm else "rules")
+        print(f"[judge] backend={label}"
+              + (f"  (reviewer answers from {args.judgment})" if args.judgment else "")
+              + ("" if use_llm or args.judgment or not args.instruction else
                  "  (tip: set RESONOTE_LLM_API_KEY to enable LLM on "
                  "--instruction)"))
 
@@ -215,10 +229,25 @@ def main():
             wav_path=args.wav,
             html_path=args.html,
             musicxml_path=args.musicxml,
+            judgment_file=args.judgment,
         )
 
     # --- friendly console output ---
     print("[analysis]\n" + res.summary)
+
+    if args.emit_prompt:
+        if res.analysis is None:
+            ap.error("--emit-prompt needs the arranging path; import mode keeps "
+                     "the original fingering and judges nothing")
+        from arrangement import LLMJudgmentLayer, assign_roles, voice
+        # assign_roles -> voice, WITHOUT judge(): that is the exact state the
+        # judgment layer sees, so the prompt describes the real decision point
+        cand = voice(assign_roles(res.raw_notes, res.analysis))
+        cand.style = args.style
+        with open(args.emit_prompt, "w", encoding="utf-8") as f:
+            f.write(LLMJudgmentLayer._build_prompt(cand, args.instruction) + "\n")
+        print(f"[prompt] wrote {args.emit_prompt}"
+              f"  (answer it with --judgment <file>)")
 
     rc = res.role_counts
     if args.input and is_tab_file(args.input):
@@ -267,7 +296,9 @@ def main():
             _dump_analysis(res.analysis, args.dump_intermediate)
             _dump_arrangement(res.raw_notes, res.analysis, args.instruction,
                               args.style, args.dump_intermediate,
-                              backend="llm" if use_llm else "rules")
+                              backend="file" if args.judgment
+                              else ("llm" if use_llm else "rules"),
+                              edits_file=args.judgment or "")
 
 
 if __name__ == "__main__":
