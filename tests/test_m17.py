@@ -98,3 +98,51 @@ def test_demucs_random_shift_is_off_by_default():
     assert sig.parameters["shifts"].default == 0, (
         "shifts>0 with no averaging reintroduces run-to-run nondeterminism; "
         "if you raise it, seed the RNG and say so here")
+
+
+def _collide(*pairs):
+    from models import PlacedNote
+    from arrange import OPEN_MIDI
+    return [PlacedNote(pitch=OPEN_MIDI[s] + f, onset=o, duration=0.5,
+                       string=s, fret=f, finger=1, role="bass")
+            for o, s, f in pairs]
+
+
+def test_unresolvable_same_string_collision_drops_one_note_not_both():
+    """Below the 5th string's open pitch (50) there is exactly ONE string that
+    can sound the note, so two of them at one instant cannot both be played.
+    Dropping must be by identity: these two are different notes, but a
+    dataclass == would say otherwise."""
+    from arrange import _resolve_string_collisions
+    placed = _collide((1.0, 6, 2), (1.0, 6, 3))
+    out = _resolve_string_collisions(placed)
+    assert len(out) == 1, f"expected one note kept, got {len(out)}"
+    assert out[0].pitch in (42, 43)
+    assert {(round(p.onset, 4), p.string) for p in out} == {(1.0, 6)}
+
+
+def test_identical_duplicate_notes_are_not_both_dropped():
+    """The old code tested membership with dataclass equality, so a melody
+    note and a bass note with the same fields -- which is exactly what
+    assign_roles produces -- vanished together instead of one surviving."""
+    from arrange import _resolve_string_collisions
+    from models import PlacedNote
+    from arrange import OPEN_MIDI
+    a = PlacedNote(pitch=44, onset=2.0, duration=0.5, string=6, fret=4,
+                   finger=1, role="melody")
+    b = PlacedNote(pitch=44, onset=2.0, duration=0.5, string=6, fret=4,
+                   finger=1, role="bass")
+    out = _resolve_string_collisions([a, b])
+    assert len(out) == 1
+    assert out[0].role == "melody", "the tune survives, the doubling goes"
+
+
+def test_a_movable_collision_is_moved_not_dropped():
+    from arrange import _resolve_string_collisions, OPEN_MIDI
+    # both pitches fit on several strings, so nothing has to be lost
+    placed = _collide((3.0, 4, 5), (3.0, 4, 7))
+    out = _resolve_string_collisions(placed)
+    assert len(out) == 2, "a solvable collision must keep both notes"
+    assert len({p.string for p in out}) == 2
+    for p in out:
+        assert OPEN_MIDI[p.string] + p.fret == p.pitch, "moving changed the pitch"

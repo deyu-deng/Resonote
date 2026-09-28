@@ -295,25 +295,40 @@ def _resolve_string_collisions(placed: List[PlacedNote]) -> List[PlacedNote]:
     One string can only be fretted in one place at a time, so a collision is
     both unplayable and illegal in GP5 (it corrupts the file). Move the
     conflicting note to the nearest free string where its pitch is playable.
+
+    Some pitches cannot be moved: below the 5th string's open pitch there is
+    exactly one string that can sound them, so a collision down there is
+    unplayable, full stop. It used to be left in place with a comment trusting
+    "the exporter will de-dupe" -- and the two exporters de-duped differently
+    (gp_export keeps the first note of a beat, musicxml_export's per-string
+    dict keeps the last), so the same arrangement produced a .gp5 and a
+    .musicxml that disagreed by a semitone and looked self-consistent in each.
+    Unplayable notes are dropped here, once, so every writer sees one list.
     """
     by_onset: dict = {}
     for p in placed:
         by_onset.setdefault(round(p.onset, 4), []).append(p)
 
+    dropped = []
     for _, grp in by_onset.items():
         used: dict = {}
-        for p in grp:
+        for p in sorted(grp, key=lambda x: (x.role != "melody", x.string)):
             if p.string not in used:
                 used[p.string] = p
                 continue
             free = [(s, f) for (s, f) in candidate_positions(p.pitch)
                     if s not in used]
-            if not free:
-                continue          # nothing playable; exporter will de-dupe
-            s, f = min(free, key=lambda c: abs(c[0] - p.string))
-            p.string, p.fret = s, f
-            used[s] = p
-    return placed
+            if free:
+                s, f = min(free, key=lambda c: abs(c[0] - p.string))
+                p.string, p.fret = s, f
+                used[s] = p
+            else:
+                dropped.append(p)       # only one string can play it, and it
+                                        # is already taken
+    # identity, not equality: PlacedNote is a dataclass, so two genuinely
+    # different notes with the same fields must not be dropped together
+    drop_ids = {id(p) for p in dropped}
+    return [p for p in placed if id(p) not in drop_ids]
 
 
 def arrange(notes,
