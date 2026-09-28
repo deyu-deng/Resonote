@@ -159,7 +159,7 @@ node tools/alphatab/verify-score.mjs <产物文件>
 
 ## 6. 已知坑（交接必读）
 
-1. **GP5 一拍内同弦双音 = 文件损坏**（Guitar Pro 打不开）。两道防线：`arrange._resolve_string_collisions` + `gp_export._emit_beat`。新指法/导出逻辑不得破坏。
+1. **GP5 一拍内同弦双音 = 文件损坏**（Guitar Pro 打不开）。修好后只剩**一道**防线：`arrange._resolve_string_collisions` 在唯一的出口处把冲突解决干净——能挪弦的挪，挪不了的（低于 5 弦空弦的音只有一根弦能按）直接丢，旋律优先于低音。`gp_export._emit_beat` 保留为最后一道保险，但**不能再依赖它**：以前"两道防线"的实际含义是两个导出器各按各的规则去重（GP5 留每拍第一个、MusicXML 的按弦字典留最后一个），于是同一份编配导出的 .gp5 与 .musicxml 会差一个半音，而两份各自看都自洽、可弹性校验也各报 0 冲突。新指法/导出逻辑不得破坏这条。
 2. **`PlacedNote.pitch` 必须 = `OPEN_MIDI[string] + fret`**。两次栽在夹具音高不自洽上。
 3. **`setuptools` 必须 <81**（basic_pitch 的 resampy 依赖 pkg_resources）。
 4. **音频解码不要用 `torchaudio.load`**：2.9+ 已移到独立 torchcodec 包。`separate._load_audio()` 用 soundfile 优先，保留 torchaudio 作兜底。
