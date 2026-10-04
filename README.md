@@ -5,41 +5,55 @@
 - **输入**：mp3/wav 音频、MIDI、Guitar Pro 3/4/5（.gp3/.gp4/.gp5/.gtp）、ASCII 文本谱（.txt/.tab）
 - **输出**：`.gp5`（编辑）、`.musicxml`（标准交换）、MIDI、WAV 试听、HTML 预览、简易 PDF
 - **核心思路**：好谱子是**减法**——分离出主旋律 + 低音支撑 + 少量和声点缀，而不是复刻整曲音频
-- 测试：**202 个**（`pytest tests/`）
+- 测试：**206 个**（`pytest tests/`）——Windows 端实测全绿，mac 端待复跑
 
 ---
 
 ## 1. 快速开始
 
 ```bash
-# 环境：Python 3.11（不要用 3.13，basic_pitch 在 macOS 绑死 tensorflow-macos<2.15.1）
-python3.11 -m venv .venv
-uv pip install --python .venv/bin/python -r requirements.txt   # 或 pip install -r requirements.txt
+# 环境：mac 侧用 Python 3.11（basic_pitch 在 mac 绑 tensorflow-macos<2.15.1，见 §8）
+# Windows 侧 3.12 已实测全绿
+python -m venv .venv
+uv pip install --python .venv -r requirements.txt   # 或 .venv 里的 pip install -r requirements.txt
 
-# 跑测试（无需任何模型/密钥）
-.venv/bin/python -m pytest tests/ -q
+# 解释器路径按平台不同：mac/linux = .venv/bin/python，Windows = .venv\Scripts\python.exe
+# 下文一律记作 $PY
+.venv/bin/python -m pytest tests/ -q               # Windows: .venv\Scripts\python.exe -m pytest tests/ -q
 
 # 最小冒烟：内置样例旋律，不依赖音频模型
 .venv/bin/python main.py --demo -o out.gp5 --html out.html
 ```
+
+### 双机开发（mac + Windows 同一份 checkout）
+
+git 是唯一同步通道，**任何东西都不要从一台拷到另一台**。下面这些本来就是各自一份、已被 gitignore：
+
+| 资产 | 规则 |
+|---|---|
+| `.venv/` | 每台机器自己 `python -m venv` 建。**拷贝 venv 会带来断链解释器和整包重装问题**（曾把 mac 的 `.venv` 拷进 Windows 项目目录，直接跑不起来） |
+| `.env` | 每台自己配；密钥不走 git |
+| `fixtures/` | 版权资产，不走 git。mac 侧是指向云盘的软链，Windows 侧要自建同名结构；测得的 BPM/调性等**元数据**记在 `fixtures/manifest.json` |
+| `runs/` | 产物按日期归档，不走 git |
+| MuseScore / FluidSynth / node | 外部工具，路径按机器不同 → 用 `RESONOTE_MSCORE`、`RESONOTE_SOUNDFONT` 指过去，找不到时代码会静默降级并打印用的是哪个 |
 
 常用命令：
 
 ```bash
 # 音频 → 指弹谱（全链路：分离 → 转写 → 乐理 → 编曲 → 指法 → 导出）
 # --pdf 装了 MuseScore 就走它出出版级排版，否则退回自写 writer（会打印用的是哪个）
-.venv/bin/python main.py "歌.mp3" -o out.gp5 --pdf out.pdf --html out.html \
+$PY main.py "歌.mp3" -o out.gp5 --pdf out.pdf --html out.html \
     --midi out.mid --wav out.wav --musicxml out.musicxml
 
 # 现成谱子（GP5 / 文本谱）→ 重新导出，**保留原作者指法，不重新编配**
-.venv/bin/python main.py song.gp5 -o mine.gp5 --pdf mine.pdf
+$PY main.py song.gp5 -o mine.gp5 --pdf mine.pdf
 
 # LLM 参与编曲判断（需 .env 配置，见 §4）
-.venv/bin/python main.py song.mid -o out.gp5 \
+$PY main.py song.mid -o out.gp5 \
     --instruction "突出主旋律，和声点缀少而精，整体简单一些" --llm
 
 # Web 界面
-.venv/bin/python web_server.py --port 8000
+$PY web_server.py --port 8000
 ```
 
 ---
@@ -128,10 +142,10 @@ LLM edit: drop harmony = 1.06（为了突出主旋律，和声应点缀少而精
 
 ```bash
 # 1. 全量测试
-.venv/bin/python -m pytest tests/ -q          # 202 个
+$PY -m pytest tests/ -q                         # 206 个
 
 # 2. 可弹性核验（同时音数 / 品位跨度——人手只有 4-5 品）
-.venv/bin/python experiments/verify_playability.py [产物.gp5]   # 默认取 runs/ 下最新
+$PY experiments/verify_playability.py [产物.gp5]   # 默认取 runs/ 下最新
 
 # 3. 独立实现交叉校验（不信 pyguitarpro 自己），gp5 / gp / musicxml / mid 通用
 cd tools/alphatab && npm install              # 一次性，13MB，无传递依赖
@@ -148,7 +162,9 @@ node tools/alphatab/verify-score.mjs <产物文件>
 出图后转 PNG 看一眼第一页：
 
 ```bash
-"/Applications/MuseScore 4.app/Contents/MacOS/mscore" -F -o /tmp/p.png <产物.gp5>
+# $MS = 本机 MuseScore CLI。代码里已带 mac/Windows/Linux 候选路径，找不到就用
+# RESONOTE_MSCORE 指过去；出图别写 /tmp，输出到当前目录即可
+"$MS" -F -o preview.png <产物.gp5>
 ```
 
 合格的《Melody》基线（分离开启）：1160 音 / 104 小节、同时最多 **4** 音（=拨弦上限）、
@@ -195,7 +211,7 @@ importers.py      GP3/4/5 + ASCII 文本谱导入
 models.py         Note / PlacedNote / STANDARD_TUNING / tuning_labels
 web_server.py     Web 后端
 web/              前端（alphaTab 渲染）
-tests/            202 个测试（test_m1..m17 编号按里程碑）
+tests/            206 个测试（test_m1..m17 编号按里程碑）
 experiments/      OMR 原型 / GP7 转换 / 可弹性核验 / 节拍对照 bench_beats.py / 两进程分离流程
 tools/alphatab/   alphaTab 独立校验器（node，npm install 后直接用，见 §5）
 samples/          自造示例谱（可提交）
