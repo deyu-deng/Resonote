@@ -57,38 +57,41 @@ def test_non_colliding_notes_untouched():
 
 
 # --- export validity ---------------------------------------------------- #
-def test_colliding_arrangement_still_exports_a_readable_file():
+def test_colliding_arrangement_still_exports_a_readable_file(tmp_path):
     p1 = PlacedNote(pitch=OPEN_MIDI[5] + 15, onset=0.0, duration=1.0,
                     string=5, fret=15, finger=0, pluck="p", role="melody")
     p2 = PlacedNote(pitch=OPEN_MIDI[5] + 19, onset=0.0, duration=1.0,
                     string=5, fret=19, finger=0, pluck="p", role="melody")
     placed = _resolve_string_collisions([p1, p2])
-    to_gp5(placed, "/tmp/m8_collide.gp5", tempo=120)
-    song = gp.parse("/tmp/m8_collide.gp5")          # must not raise
+    out = str(tmp_path / "m8_collide.gp5")
+    to_gp5(placed, out, tempo=120)
+    song = gp.parse(out)                            # must not raise
     for b in _all_beats(song):
         strs = [nt.string for nt in b.notes]
         assert len(set(strs)) == len(strs), "duplicate string in a beat"
     assert len(_attacks(song)) == 2                 # neither note was dropped
 
 
-def test_demo_arrangement_roundtrip_is_valid():
+def test_demo_arrangement_roundtrip_is_valid(tmp_path):
     notes = sample_notes()
     an = analyze(notes)
     placed = arrange(notes, analysis=an)
-    to_gp5(placed, "/tmp/m8_demo.gp5", tempo=an.tempo)
-    song = gp.parse("/tmp/m8_demo.gp5")
+    out = str(tmp_path / "m8_demo.gp5")
+    to_gp5(placed, out, tempo=an.tempo)
+    song = gp.parse(out)
     for b in _all_beats(song):
         strs = [nt.string for nt in b.notes]
         assert len(set(strs)) == len(strs)
     assert len(_attacks(song)) > 0
 
 
-def test_every_measure_tiles_to_a_full_bar():
+def test_every_measure_tiles_to_a_full_bar(tmp_path):
     notes = sample_notes()
     an = analyze(notes)
     placed = arrange(notes, analysis=an)
-    to_gp5(placed, "/tmp/m8_tiles.gp5", tempo=an.tempo)
-    song = gp.parse("/tmp/m8_tiles.gp5")
+    out = str(tmp_path / "m8_tiles.gp5")
+    to_gp5(placed, out, tempo=an.tempo)
+    song = gp.parse(out)
     # gp duration.value: 1=whole 2=half 4=quarter 8=eighth (eighth = 1 slot)
     slots = {1: 8, 2: 4, 4: 2, 8: 1}
     for m in song.tracks[0].measures:

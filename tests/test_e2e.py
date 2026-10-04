@@ -14,13 +14,12 @@ from arrange import arrange, OPEN_MIDI
 from gp_export import to_gp5
 from preview import ascii_tab
 
-OUT = "/tmp/resonote_test.gp5"
-
 # C-major scale, on a steady eighth grid (0.5s @ 120bpm == quarter)
 PITCHES = [60, 62, 64, 65, 67, 69, 71, 72, 71, 69, 67, 65, 64, 62, 60]
 
 
-def test_roundtrip():
+def test_roundtrip(tmp_path):
+    out = str(tmp_path / "resonote_test.gp5")
     notes = [Note(pitch=p, onset=i * 0.5, duration=0.5) for i, p in enumerate(PITCHES)]
     placed = arrange(notes)
 
@@ -34,10 +33,10 @@ def test_roundtrip():
         assert 0 <= p.finger <= 4, f"bad finger {p.finger}"
 
     # 2. export
-    to_gp5(placed, OUT, tempo=120)
+    to_gp5(placed, out, tempo=120)
 
     # 3. read back with pyguitarpro
-    song = gp.parse(OUT)
+    song = gp.parse(out)
     read_notes = [n for t in song.tracks for m in t.measures
                   for v in m.voices for b in v.beats for n in b.notes]
     assert len(read_notes) == len(notes), f"notes lost on save ({len(read_notes)}!={len(notes)})"
@@ -51,4 +50,6 @@ def test_roundtrip():
 
 
 if __name__ == "__main__":
-    test_roundtrip()
+    import pathlib
+    import tempfile
+    test_roundtrip(pathlib.Path(tempfile.mkdtemp()))
