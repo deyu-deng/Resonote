@@ -27,9 +27,9 @@ def test_find_engraver_returns_nothing_or_a_real_path():
     assert exe is None or os.path.exists(exe), exe
 
 
-def test_engrave_is_falsey_without_an_engraver(monkeypatch):
+def test_engrave_is_falsey_without_an_engraver(monkeypatch, tmp_path):
     monkeypatch.setattr(engraving, "find_engraver", lambda: None)
-    assert engrave("/tmp/in.gp5", "/tmp/out.pdf") is False
+    assert engrave(str(tmp_path / "in.gp5"), str(tmp_path / "out.pdf")) is False
 
 
 def test_success_is_judged_by_the_artifact_not_the_exit_code(monkeypatch, tmp_path):
@@ -80,7 +80,7 @@ def test_no_soundfont_flag_is_not_passed(monkeypatch):
     assert "-F" in seen["cmd"], "factory settings keep a first run from prompting"
 
 
-def test_a_timeout_is_not_a_crash(monkeypatch):
+def test_a_timeout_is_not_a_crash(monkeypatch, tmp_path):
     import subprocess as sp
     monkeypatch.setattr(engraving, "find_engraver", lambda: "/usr/bin/mscore")
 
@@ -88,7 +88,19 @@ def test_a_timeout_is_not_a_crash(monkeypatch):
         raise sp.TimeoutExpired(cmd="mscore", timeout=1)
 
     monkeypatch.setattr(engraving.subprocess, "run", raise_timeout)
-    assert engrave("in.gp5", "/tmp/nope.pdf") is False
+    assert engrave("in.gp5", str(tmp_path / "nope.pdf")) is False
+
+
+def test_resonote_mscore_points_at_a_machine_local_install(monkeypatch, tmp_path):
+    """Each dev machine keeps MuseScore somewhere of its own; the env var is
+    the one candidate that does not need a code change."""
+    exe = tmp_path / "mscore"
+    exe.write_bytes(b"")
+    monkeypatch.setenv("RESONOTE_MSCORE", str(exe))
+    assert engraving.find_engraver() == str(exe)
+
+    monkeypatch.setenv("RESONOTE_MSCORE", str(tmp_path / "absent"))
+    assert engraving.find_engraver() != str(tmp_path / "absent")
 
 
 def test_preview_prefers_fluidsynth_when_a_soundfont_exists(monkeypatch, tmp_path):

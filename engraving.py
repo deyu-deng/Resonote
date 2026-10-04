@@ -22,16 +22,24 @@ import shutil
 import subprocess
 from typing import List, Optional
 
+# Candidates only, and every one of them is checked with os.path.exists: a
+# machine is expected to have at most one. RESONOTE_MSCORE overrides all of
+# this for installs that live somewhere else.
 MSCORE_APPS = [
     "/Applications/MuseScore 4.app/Contents/MacOS/mscore",
     "/Applications/MuseScore Studio.app/Contents/MacOS/mscore",
+    "C:/Program Files/MuseScore 4/bin/MuseScore4.exe",
+    "/usr/bin/mscore",
+    "/var/lib/flatpak/app/org.musescore.MuseScore/current/active/files/bin/mscore",
 ]
 
 
 def find_engraver() -> Optional[str]:
-    """Path to a MuseScore CLI, or None. The brew wrapper is checked first
-    because it is what a user who installed via Homebrew will have."""
-    for name in ("mscore", "musescore"):
+    """Path to a MuseScore CLI, or None."""
+    env = os.environ.get("RESONOTE_MSCORE")
+    if env and os.path.exists(env):
+        return env
+    for name in ("mscore", "musescore", "MuseScore4"):
         found = shutil.which(name)
         if found:
             return found
