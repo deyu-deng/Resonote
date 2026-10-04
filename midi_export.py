@@ -145,13 +145,19 @@ def find_fluidsynth() -> Optional[str]:
 # bank without a code change; MuseScore's bundled MS Basic is the pragmatic
 # default on a machine that has MuseScore, which is the same machine that can
 # already engrave our PDFs.
+#
+# glob has no brace expansion, so an entry needs one extension of its own --
+# "*.sf{2,3}" silently matches nothing.
 _SOUNDFONT_GLOBS = [
     "~/Library/Component-Kits/com.mrbumpy409.GeneralUserGS/GeneralUser GS.sf2",
     "/Library/Audio/Sounds/Fampacks/*.sf2",
     "/Library/Audio/Sounds/*.sf2",
     "/opt/homebrew/share/fluid-synth/*.sf2",
     "/Applications/MuseScore 4.app/Contents/Resources/sound/*.sf3",
-    "~/.local/share/soundfonts/*.sf{2,3}",
+    "~/.local/share/soundfonts/*.sf2",
+    "~/.local/share/soundfonts/*.sf3",
+    "/usr/share/sounds/sf2/*.sf2",
+    "C:/Program Files/fluidsynth/sound/*.sf2",
 ]
 
 
