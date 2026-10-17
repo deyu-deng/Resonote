@@ -177,3 +177,20 @@ def test_a_cjk_title_writes_a_gp5_instead_of_crashing(tmp_path):
                        finger=0)], out, tempo=111.0, title="Melody — 陶喆")
     import guitarpro as gp
     assert gp.parse(out).title == "Melody"
+
+
+def test_a_title_the_format_cannot_hold_is_announced(tmp_path, capsys):
+    """The fallback is correct; finding out only by opening the file is not. A
+    user who passed --title and sees "Resonote" cannot tell a dropped argument
+    from a broken writer."""
+    from gp_export import to_gp5
+    from models import PlacedNote
+    one = [PlacedNote(pitch=64, onset=0.0, duration=0.5, string=1, fret=0, finger=0)]
+
+    to_gp5(one, str(tmp_path / "cjk.gp5"), tempo=111.0, title="雨下一整晚")
+    said = capsys.readouterr().out
+    assert "雨下一整晚" in said and "Resonote" in said, said
+
+    capsys.readouterr()
+    to_gp5(one, str(tmp_path / "latin.gp5"), tempo=111.0, title="Melody")
+    assert "note" not in capsys.readouterr().out, "nothing was lost, so say nothing"

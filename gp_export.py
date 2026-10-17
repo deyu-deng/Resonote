@@ -212,7 +212,15 @@ def to_gp5(placed, out_path, tempo: float = 120, title: str = "Resonote",
     standard tuning and every pitch will come out wrong.
     """
     song = gp.Song()
-    song.title = _gp5_text(title)
+    stored_title = _gp5_text(title)
+    if stored_title != title:
+        # Say so out loud: a caller that passed --title "雨下一整晚" and gets a
+        # score headed "Resonote" has no way to tell a dropped argument from a
+        # broken writer.
+        print(f"  [note] .gp5 cannot hold the title {title!r} (GP5 text is "
+              f"cp1252); it says {stored_title!r}. MusicXML and PDF keep the "
+              f"real title.")
+    song.title = stored_title
     song.tempo = tempo
 
     strings = list(tuning) if tuning else list(STANDARD_TUNING)
