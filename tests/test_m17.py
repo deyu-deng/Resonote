@@ -172,14 +172,19 @@ def test_role_assignment_follows_instrument_word_families():
 def test_real_instrument_labels_suppress_the_derived_accompaniment():
     """Deriving bass+harmony from chords is for a bare melody line. When the
     transcription already heard a guitar, layering derived notes on top of it
-    is what produced the same-string collisions."""
+    is what produced the same-string collisions. The guitar's own low end
+    becomes the bass voice -- real notes, not invented ones."""
     from arrangement import assign_roles
     from models import Note
     from analysis import AnalysisResult, Chord
     notes = [Note(pitch=64, onset=0.0, duration=0.5, instrument="voice"),
-             Note(pitch=52, onset=0.5, duration=0.5, instrument="acoustic guitar")]
+             Note(pitch=52, onset=0.5, duration=0.5, instrument="acoustic guitar"),
+             Note(pitch=60, onset=1.0, duration=0.5, instrument="acoustic guitar")]
     an = AnalysisResult(chords=[Chord(label="E", root=4, quality="",
                                       start=0.0, end=4.0, confidence=1.0)])
     arr = assign_roles(notes, an)
-    assert len(arr.bass) == 0, "guitar was heard; no derived bass line needed"
-    assert len(arr.harmony) == 1
+    invented = [n for n in arr.bass + arr.harmony if str(n.source).startswith("derived:")]
+    assert not invented, f"chord-derived voices appeared over a real track: {invented}"
+    assert [n.pitch for n in arr.bass] == [52], "the guitar's low end is the bass line"
+    assert [n.pitch for n in arr.harmony] == [60]
+    assert [n.pitch for n in arr.melody] == [64]

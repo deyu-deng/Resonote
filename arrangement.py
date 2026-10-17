@@ -152,6 +152,20 @@ def assign_roles(notes: Sequence[Note], analysis: Optional[AnalysisResult]) -> A
         rn.role = role
         {Role.MELODY: melody, Role.BASS: bass_in, Role.HARMONY: harmony_in}[role].append(rn)
 
+    # A real accompaniment track carries its own bass line: the low end of the
+    # guitar/piano part IS the bass voice, and filing it under "harmony" left
+    # the arrangement with bass=0 -- the product brief asks for melody plus
+    # bass support plus sparse harmony. 55 is the same register boundary
+    # _nearest_low_pitch() and _nearest_mid_pitch() already share, so there is
+    # one definition of "bass register" in this module, not two.
+    if not bass_in:
+        low = [h for h in harmony_in if h.pitch < 55]
+        if low:
+            for rn in low:
+                rn.role = Role.BASS
+            harmony_in = [h for h in harmony_in if h.pitch >= 55]
+            bass_in = low
+
     # Derive accompaniment only when nothing real was heard to stand in for it.
     has_bass_stem = bool(bass_in)
     has_other_stem = bool(harmony_in)
