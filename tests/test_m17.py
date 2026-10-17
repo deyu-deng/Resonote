@@ -188,3 +188,35 @@ def test_real_instrument_labels_suppress_the_derived_accompaniment():
     assert [n.pitch for n in arr.bass] == [52], "the guitar's low end is the bass line"
     assert [n.pitch for n in arr.harmony] == [60]
     assert [n.pitch for n in arr.melody] == [64]
+
+
+def _arrange_demo():
+    from arrangement import Arrangement, Role, RoleNote
+    a = Arrangement(key="E", tempo=111.1, style="fingerstyle")
+    a.melody = [RoleNote(pitch=64, onset=i * 2.0, duration=0.4,
+                         velocity=90, role=Role.MELODY) for i in range(4)]
+    a.harmony = [RoleNote(pitch=57, onset=i * 2.0 + 0.1, duration=0.4,
+                          velocity=90, role=Role.HARMONY) for i in range(8)]
+    return a
+
+
+def test_saying_light_density_actually_thins_the_arrangement():
+    """`set_density` used to write a flag that nothing read: only the rules
+    layer thinned, and it did so by emitting explicit drops of its own. So a
+    reviewer or an LLM answering "make it lighter" changed nothing you could
+    hear -- the judgment layer's headline lever was cosmetic."""
+    from arrangement import _apply_edits, _rule_judge
+    arr = _arrange_demo()
+    before = len(arr.harmony)
+    out = _apply_edits(arr, [_rule_judge(_arrange_demo(), "简单一点")[0]])
+    assert out.density == "light"
+    assert len(out.harmony) < before, "density=light changed nothing"
+    assert len(out.harmony) == before // 2, "should halve once, not twice"
+
+
+def test_rules_and_reviewer_agree_on_what_light_means():
+    from arrangement import _apply_edits, _rule_judge
+    by_rules = _apply_edits(_arrange_demo(), _rule_judge(_arrange_demo(), "simpler"))
+    by_word = _apply_edits(_arrange_demo(), _rule_judge(_arrange_demo(), "simpler")[:1])
+    assert len(by_rules.harmony) == len(by_word.harmony), \
+        "two definitions of 'light' have diverged"

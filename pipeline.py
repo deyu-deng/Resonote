@@ -152,21 +152,26 @@ def run(input_path: Optional[str] = None, *,
     placed = quantize_placed(placed, analysis, subdivision=2)  # idempotent net
 
     anchor = analysis.beats[0] if analysis.beats else 0.0
+    # The song's own name, not a placeholder: this lands in the printed score's
+    # title block, and "Resonote" on every export is what a template says, not
+    # what a person wants to hand someone.
+    score_title = (os.path.splitext(os.path.basename(input_path))[0]
+                   if input_path else "Resonote")
 
     # --- exports (in-memory always; to disk when a path is given) ---
     if gp5_path:
-        to_gp5(placed, gp5_path, tempo=eff_tempo, anchor=anchor)
+        to_gp5(placed, gp5_path, tempo=eff_tempo, anchor=anchor,
+               title=score_title)
         gp5_bytes = open(gp5_path, "rb").read()
     else:
         gp5_bytes = _write_to_temp(
-            lambda p: to_gp5(placed, p, tempo=eff_tempo, anchor=anchor))
+            lambda p: to_gp5(placed, p, tempo=eff_tempo, anchor=anchor,
+                             title=score_title))
 
     if musicxml_path:
         from musicxml_export import write_musicxml
-        write_musicxml(
-            placed, musicxml_path, tempo=eff_tempo,
-            title=(os.path.splitext(os.path.basename(input_path))[0]
-                   if input_path else "Resonote"))
+        write_musicxml(placed, musicxml_path, tempo=eff_tempo,
+                       title=score_title)
 
     wav_bytes = None
 

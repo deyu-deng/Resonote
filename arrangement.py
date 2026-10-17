@@ -265,6 +265,18 @@ class Edit:
     reason: str = ""
 
 
+def _thin_harmony(arr: Arrangement, reason: str) -> List[Edit]:
+    """Halve the harmony: drop every other harmony onset.
+
+    One definition, used by both the rules layer and the density edit applied
+    in _apply_edits(), so a reviewer asking for "light" gets exactly what the
+    rules consider light rather than a second, drifting interpretation of it.
+    """
+    onsets = sorted({round(h.onset, 4) for h in arr.harmony})
+    return [Edit("drop", "harmony", o, reason)
+            for idx, o in enumerate(onsets) if idx % 2 == 1]
+
+
 def _rule_judge(arr: Arrangement, instructions: str = "") -> List[Edit]:
     """Deterministic rules skeleton. Produces edits for playability/density/style."""
     edits: List[Edit] = []
@@ -289,25 +301,9 @@ def _rule_judge(arr: Arrangement, instructions: str = "") -> List[Edit]:
         style = "classical"
     edits.append(Edit("set_style", "all", style, f"style -> {style}"))
 
-    # --- playability: in light density, thin the harmony to every other chord ---
-    if density == "light" and arr.harmony:
-        seen_onsets = set()
-        drop_count = 0
-        for h in arr.harmony:
-            key = round(h.onset, 4)
-            if key in seen_onsets:
-                continue
-            seen_onsets.add(key)
-        # drop harmony events whose onset index is odd
-        onsets = sorted({round(h.onset, 4) for h in arr.harmony})
-        for idx, o in enumerate(onsets):
-            if idx % 2 == 1:
-                edits.append(Edit("drop", "harmony", o,
-                                  "light density: thin harmony to every other chord"))
-                drop_count += 1
-        if drop_count:
-            edits.append(Edit("keep", "all", None,
-                              f"rules: dropped {drop_count} harmony chords (light)"))
+    # --- playability: light density is *applied* by _apply_edits, so the rules
+    # only state the intent. Emitting the drops here as well would halve the
+    # harmony twice. ---
 
     # --- drop very low-velocity harmony notes (noise) ---
     for h in arr.harmony:
@@ -321,6 +317,13 @@ def _apply_edits(arr: Arrangement, edits: List[Edit]) -> Arrangement:
     for e in edits:
         if e.op == "set_density":
             arr.density = e.value
+            if e.value == "light":
+                # Applying it, not just recording it. Until now a reviewer or
+                # an LLM saying "light" set a flag nothing read -- only the
+                # rules layer thinned anything, by emitting explicit drops.
+                # So the judgment layer's headline lever was cosmetic.
+                arr = _apply_edits(arr, _thin_harmony(
+                    arr, "light density: thin harmony to every other chord"))
         elif e.op == "set_style":
             arr.style = e.value
         elif e.op == "drop" and e.target == "harmony":
