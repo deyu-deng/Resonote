@@ -33,6 +33,25 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(_HERE, "web")
 RESULTS_DIR = os.path.join(WEB_DIR, "results")
 
+# alphaTab is already vendored for the independent cross-checker in §5 of the
+# README, so the UI renders from that copy instead of a CDN: a desktop shell has
+# no business assuming internet access.
+ALPHATAB_DIST = os.path.join(_HERE, "tools", "alphatab", "node_modules",
+                             "@coderline", "alphatab", "dist")
+_VENDOR_PREFIX = "/vendor/alphatab/"
+
+# Windows' mimetype table doesn't know these, and a module served as
+# application/octet-stream is refused by the browser as an ES module.
+_EXTRA_TYPES = {
+    ".mjs": "text/javascript",
+    ".js": "text/javascript",
+    ".css": "text/css",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".otf": "font/opentype",
+    ".json": "application/json",
+}
+
 # delete result dirs older than this (avoid disk bloat from uploads)
 _MAX_AGE_HOURS = 1
 
@@ -129,8 +148,23 @@ def arrange_request(body: bytes, filename: str, params: dict) -> dict:
 
 
 class Handler(SimpleHTTPRequestHandler):
+    extensions_map = {**SimpleHTTPRequestHandler.extensions_map, **_EXTRA_TYPES}
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
+
+    def translate_path(self, path: str) -> str:
+        """/vendor/alphatab/* comes from the vendored dist, not from web/.
+
+        Every ``.``/``..`` component is dropped, so a crafted URL cannot climb
+        out of that directory into the rest of the machine.
+        """
+        clean = path.split("?", 1)[0].split("#", 1)[0]
+        if clean.startswith(_VENDOR_PREFIX):
+            tail = clean[len(_VENDOR_PREFIX):].replace("\\", "/")
+            parts = [p for p in tail.split("/") if p and p not in (".", "..")]
+            return os.path.join(ALPHATAB_DIST, *parts) if parts else ALPHATAB_DIST
+        return super().translate_path(path)
 
     def _send_json(self, obj: dict, status: int = 200) -> None:
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
