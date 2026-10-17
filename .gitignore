@@ -5,6 +5,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.pytest-tmp/
 
 # Node helper tooling (tools/alphatab) — deps are re-installable
 node_modules/
