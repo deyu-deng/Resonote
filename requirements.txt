@@ -10,15 +10,30 @@ pyguitarpro>=0.11
 pretty_midi>=0.2.11
 numpy>=2.0               # 3.13 只有 numpy>=2 的预编译包；1.x 要现场编译源码，会失败
 soundfile>=0.12          # 读写音频文件（L2 分离要用）
-setuptools<81            # basic_pitch 依赖一个老接口 pkg_resources，81 版起被删掉，不钉住就 import 失败
+setuptools<81            # 81 版起删掉了 pkg_resources，而 resampy 0.4.2 还 import 它（2026-10-04 实测有警告）
 
 # ---------------------------------------------------------------------------
 # 听音频 → 音符（L3）
 # ---------------------------------------------------------------------------
-# Spotify 出的开源转写模型，会连带装 TensorFlow（约 1GB）。
-# 整曲混音准确率只有 F1≈0.43（"一半对一半错"级别），单乐器干净录音才好用，
-# 所以要和下面的 demucs 配合：先分离、再转写。
-basic_pitch
+# Spotify 的开源转写模型。整曲混音准确率只有 F1≈0.43（"一半对一半错"级别），
+# 单乐器干净录音才好用，所以要和下面的 demucs 配合：先分离、再转写。
+#
+# 它**不进下面的自动安装清单**，因为要用 --no-deps 单装：basic_pitch 把
+# TensorFlow 写成硬依赖，而 Mac 那条 TensorFlow 产品线钉的
+# tensorflow-macos<2.15.1 从来没出过 Python 3.12 的包 —— 交集为空，装不上。
+# 但推理根本不需要 TensorFlow：同一个模型在包里有四份包装
+# （TF 1.3MB / onnx 228KB / tflite 200KB / CoreML），transcribe.py 现在
+# 明确走 ONNX 那份，所以两端都能用 3.12。2026-10-04 实测：合成旋律 8 音全命中。
+#
+#   uv pip install --python .venv --no-deps basic-pitch
+#
+# 它真正需要的东西在下面这些名字里，正常装即可。
+onnxruntime>=1.17         # 跑 ONNX 模型（mac 21.5MB / win 14.3MB，都有 3.12 现成包）
+librosa>=0.10             # basic_pitch 用它重采样和读音频
+scipy                     # librosa 依赖
+numba                     # librosa 依赖
+resampy<0.4.3             # basic_pitch 钉的；0.4.2 里 import pkg_resources，所以上面 setuptools 要 <81
+mir_eval                  # basic_pitch 的 note_creation 会 import 它
 
 # ---------------------------------------------------------------------------
 # 把一首歌拆成人声/贝斯/其它/鼓（L2）
@@ -85,5 +100,7 @@ pytest
 #               transcribe.py 里给它留的位置同样永远进不去。
 #   all-in-one  2024-05 后停更，而且 PyPI 上这个名字是 2021 年一个空壳版本。
 #   Essentia    AGPL-3.0（会传染到整个项目，发行是雷）。
-#   abjad       3.31 要求 Python 3.12+，而我们被 basic_pitch 钉死在 3.11。
+#   abjad       3.31 要求 Python 3.12+。**这条限制已经不存在**：两端都在 3.12，
+#               绕开 TensorFlow 之后没人把我们钉在 3.11（见上面 L3 那节）。
+#               想用就试，但还没验证它和 librosa 1.0 能不能共存。
 # ---------------------------------------------------------------------------

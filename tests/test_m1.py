@@ -150,6 +150,50 @@ def test_amt_factory():
     print("OK: AMT backend factory")
 
 
+def test_basic_pitch_prefers_the_onnx_asset():
+    """The audio path must not need TensorFlow: basic_pitch pins
+    ``tensorflow-macos<2.15.1`` and that line never shipped a Python 3.12 macOS
+    build, so asking for TF makes L3 uninstallable on half the dev machines."""
+    if not basic_pitch_available():
+        print("SKIP: basic_pitch not installed")
+        return
+    from transcribe import BasicPitchBackend
+
+    path = BasicPitchBackend._onnx_model_path()
+    assert path.endswith("nmp.onnx"), f"expected the ONNX asset, got {path}"
+    assert os.path.exists(path), path
+    print(f"OK: L3 runs {os.path.basename(path)} "
+          f"({os.path.getsize(path) // 1024} KB) without TensorFlow")
+
+
+def test_basic_pitch_drops_low_confidence_notes(monkeypatch):
+    """On a synth melody the model scored its eight real notes 0.71-0.74 and six
+    octave-up ghosts 0.31-0.48. Unguarded, the ghosts reach arrangement as extra
+    strings to fret. predict() is stood in so the real model stays out of tests."""
+    import types
+    import transcribe as tr
+
+    events = [
+        (0.00, 0.45, 69, 0.73, None),    # real note
+        (0.50, 0.95, 84, 0.33, None),    # octave-up ghost
+        (1.00, 1.40, 72, 0.50, None),    # exactly at the default threshold
+    ]
+    inference = types.ModuleType("basic_pitch.inference")
+    inference.predict = lambda audio_path, model, **kw: ({}, None, events)
+    pkg = types.ModuleType("basic_pitch")
+    pkg.__file__ = os.path.join(os.path.dirname(os.path.abspath(tr.__file__)),
+                                "_no_tensorflow_here", "__init__.py")
+    pkg.ICASSP_2022_MODEL_PATH = "fallback-path"
+    pkg.inference = inference
+    monkeypatch.setitem(sys.modules, "basic_pitch", pkg)
+    monkeypatch.setitem(sys.modules, "basic_pitch.inference", inference)
+
+    notes = tr.BasicPitchBackend().transcribe("song.wav")
+    assert [n.pitch for n in notes] == [69, 72], "ghost note survived the filter"
+    assert notes[0].velocity == 93, notes[0].velocity   # round(127 * 0.73)
+    print("OK: 低把握度的幽灵音被滤掉，力度沿用 basic_pitch 自己的换算")
+
+
 # --------------------------------------------------------------------------- #
 #  4. transcribe_audio fallback (no heavy deps)                               #
 # --------------------------------------------------------------------------- #

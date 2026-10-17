@@ -7,7 +7,8 @@ Turns audio (or MIDI) into a list of :class:`Note` objects. Three backends:
 * ``YourMT3Backend``     — YourMT3+ multi-task AMT (2024 SOTA, F1≈0.85).
                            Lazy, requires GPU + model weights to be practical.
                            Tags notes with instrument/program info.
-* ``BasicPitchBackend``  — Spotify Basic-Pitch (F1≈0.43). Lazy TF dep.
+* ``BasicPitchBackend``  — Spotify Basic-Pitch (F1≈0.43). Lazy import, runs the
+                           ONNX model that ships in the package (no TensorFlow).
                            Used as fallback when YourMT3+ is unavailable.
 
 The orchestrator :func:`transcribe_audio` runs the full L2→L3 pipeline:
@@ -178,43 +179,66 @@ class YourMT3Backend(TranscriptionBackend):
 # --------------------------------------------------------------------------- #
 
 class BasicPitchBackend(TranscriptionBackend):
-    """Transcribe audio with Basic-Pitch. Requires ``basic_pitch`` installed.
+    """Transcribe audio with Basic-Pitch (Spotify, Apache-2.0).
 
-    pip install basic_pitch   # ~TF-sized; done on demand, not in base env
+    Runs the **ONNX** copy of the model, which ships inside the package
+    (``saved_models/icassp_2022/nmp.onnx``, 228 KB). Same weights as the
+    TensorFlow SavedModel, but inference needs no TensorFlow install -- and that
+    is not cosmetic: basic_pitch pins ``tensorflow-macos<2.15.1``, which has no
+    Python 3.12 macOS wheel, so letting it choose TensorFlow would make the
+    audio path uninstallable on half our dev machines.
+
+    ``min_confidence`` drops the notes the model is unsure about. On a synth
+    melody with eight known pitches, the correct notes scored 0.71-0.74 while
+    six spurious octave-up ghost notes scored 0.31-0.48; those ghosts otherwise
+    flow into arrangement as extra strings to fret.
     """
 
-    def __init__(self, model=None):
+    def __init__(self, model: str | None = None, min_confidence: float = 0.5):
         self._model = model
+        self._min_confidence = min_confidence
+
+    @staticmethod
+    def _onnx_model_path() -> str:
+        """The ONNX asset inside the installed package, so we never fall into
+        basic_pitch's own TensorFlow-preferred default."""
+        import basic_pitch
+
+        root = os.path.dirname(os.path.abspath(basic_pitch.__file__))
+        onnx = os.path.join(root, "saved_models", "icassp_2022", "nmp.onnx")
+        if os.path.exists(onnx):
+            return onnx
+        return str(basic_pitch.ICASSP_2022_MODEL_PATH)
 
     def transcribe(self, path: str) -> list[Note]:
         try:
             from basic_pitch.inference import predict
-            from basic_pitch import note_creation
         except ImportError as e:
             raise RuntimeError(
-                "Basic-Pitch is not installed. Run: pip install basic_pitch\n"
-                "Then retry. (It pulls in TensorFlow, so it is an opt-in dep.)"
+                "Basic-Pitch is not installed. Install the ONNX path:\n"
+                "  pip install --no-deps basic-pitch\n"
+                "  pip install onnxruntime librosa scipy numba soundfile "
+                "resampy==0.4.2 mir_eval\n"
+                "--no-deps because basic_pitch's TensorFlow pin has no macOS "
+                "wheel for Python 3.12, and we do not use TensorFlow."
             ) from e
 
-        # predict returns (model_output, audio_data, audio_rate)
-        model_output, _, _ = predict(path)
-        # basic_pitch >= 0.4 returns a (PrettyMIDI, note_events) tuple;
-        # older versions returned the PrettyMIDI object directly.
-        midi_out = note_creation.model_output_to_notes(
-            model_output, onset_thresh=0.5, frame_thresh=0.3,
-            infer_onsets=True, min_note_len=11, melodia_trick=True)
-        midi_data = midi_out[0] if isinstance(midi_out, tuple) else midi_out
+        # predict() returns (model_output, PrettyMIDI, note_events); the events
+        # carry confidence, the PrettyMIDI does not. Its defaults already include
+        # the fix for short notes being dropped -- min_note_len=127.7 ms, which is
+        # the 11 frames this layer once lost a song over. Don't lower it.
+        _model_output, _midi, note_events = predict(path, self._model or self._onnx_model_path())
 
         notes = []
-        for tid, instr in enumerate(midi_data.instruments):
-            for n in instr.notes:
-                notes.append(Note(
-                    pitch=n.pitch,
-                    onset=float(n.start),
-                    duration=max(0.05, float(n.end - n.start)),
-                    velocity=int(n.velocity),
-                    track_id=tid,
-                ))
+        for start, end, pitch, confidence, _bends in note_events:
+            if confidence < self._min_confidence:
+                continue
+            notes.append(Note(
+                pitch=int(pitch),
+                onset=float(start),
+                duration=max(0.05, float(end) - float(start)),
+                velocity=int(round(127 * confidence)),   # basic_pitch's own mapping
+            ))
         notes.sort(key=lambda n: (n.onset, -n.pitch))
         return notes
 
@@ -402,8 +426,8 @@ def transcribe_audio(
     stems = separator.separate(path)
     del separator
     gc.collect()   # free the demucs model before the AMT backend loads:
-                   # demucs (torch) and basic_pitch (TF) never need to be
-                   # resident together, and holding both is what gets long
+                   # demucs (torch) and the transcription runtime never need to
+                   # be resident together, and holding both is what gets long
                    # songs killed mid-prediction on small machines
 
     # filter stems (skip drums for guitar arrangement)
