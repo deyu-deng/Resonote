@@ -146,3 +146,40 @@ def test_a_movable_collision_is_moved_not_dropped():
     assert len({p.string for p in out}) == 2
     for p in out:
         assert OPEN_MIDI[p.string] + p.fret == p.pitch, "moving changed the pitch"
+
+
+def test_role_assignment_follows_instrument_word_families():
+    """The label depends on who produced it: demucs says 'vocals', MuScriptor
+    says 'voice', the GM table would say 'Choir Aahs'. Exact-string matching
+    silently sent all of that to the melody pile, which is how the arrangement
+    ended up doubling the entire mix as a tune."""
+    from arrangement import Role, assign_roles
+    from models import Note
+    notes = [
+        Note(pitch=64, onset=0.0, duration=0.5, instrument="voice"),
+        Note(pitch=62, onset=0.5, duration=0.5, instrument="vocals"),
+        Note(pitch=40, onset=1.0, duration=0.5, instrument="bass"),
+        Note(pitch=55, onset=1.5, duration=0.5, instrument="acoustic guitar"),
+        Note(pitch=60, onset=2.0, duration=0.5, instrument="piano"),
+        Note(pitch=57, onset=2.5, duration=0.5, instrument=""),      # bare MIDI
+    ]
+    arr = assign_roles(notes, None)
+    assert [n.source for n in arr.melody] == ["voice", "vocals", ""]
+    assert [n.source for n in arr.bass] == ["bass"]
+    assert [n.source for n in arr.harmony] == ["acoustic guitar", "piano"]
+
+
+def test_real_instrument_labels_suppress_the_derived_accompaniment():
+    """Deriving bass+harmony from chords is for a bare melody line. When the
+    transcription already heard a guitar, layering derived notes on top of it
+    is what produced the same-string collisions."""
+    from arrangement import assign_roles
+    from models import Note
+    from analysis import AnalysisResult, Chord
+    notes = [Note(pitch=64, onset=0.0, duration=0.5, instrument="voice"),
+             Note(pitch=52, onset=0.5, duration=0.5, instrument="acoustic guitar")]
+    an = AnalysisResult(chords=[Chord(label="E", root=4, quality="",
+                                      start=0.0, end=4.0, confidence=1.0)])
+    arr = assign_roles(notes, an)
+    assert len(arr.bass) == 0, "guitar was heard; no derived bass line needed"
+    assert len(arr.harmony) == 1

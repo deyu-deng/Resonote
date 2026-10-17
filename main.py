@@ -141,7 +141,8 @@ def main():
                     help="ignore input, use the built-in sample melody")
     ap.add_argument("--no-separate", action="store_true",
                     help="skip source separation (L2); faster but less accurate on full mixes")
-    ap.add_argument("--amt", choices=["auto", "yourmt3", "basic-pitch"], default="auto",
+    ap.add_argument("--amt", choices=["auto", "basic-pitch", "muscriptor", "yourmt3"],
+                    default="auto",
                     help="audio transcription backend (L3)")
     ap.add_argument("--dump-intermediate", default=None, metavar="DIR",
                     help="dump separated stems + transcribed notes to DIR for debugging")
@@ -179,10 +180,16 @@ def main():
         print(f"[import] reading {kind} {args.input} "
               f"(fingering preserved, no re-arrangement)")
     else:
-        sep_label = "off" if args.no_separate else ("demucs" if demucs_available() else "passthrough")
-        amt_label = args.amt
-        if amt_label == "auto":
-            amt_label = "yourmt3+" if yourmt3_available() else "basic-pitch"
+        # MuScriptor transcribes the whole mix and separates by labelling, so
+        # saying "separation=demucs" here would describe a run that is not
+        # happening (transcribe_audio short-circuits before L2 for it).
+        if args.amt == "muscriptor":
+            sep_label = "not used (muscriptor labels instruments itself)"
+        else:
+            sep_label = "off" if args.no_separate else (
+                "demucs" if demucs_available() else "passthrough")
+        amt_label = args.amt if args.amt != "auto" else (
+            "yourmt3+" if yourmt3_available() else "basic-pitch")
         print(f"[audio] separation={sep_label}  amt={amt_label}")
 
     # --- decide the judgment backend ---

@@ -219,9 +219,85 @@ class BasicPitchBackend(TranscriptionBackend):
         return notes
 
 
+class MuScriptorBackend(TranscriptionBackend):
+    """Audio -> notes with MuScriptor (Kyutai + Mirelo, 2026).
+
+    The reason to switch is not only accuracy: MuScriptor reports **what it
+    heard** (voice / acoustic guitar / piano / drums ...) per note, where
+    Basic-Pitch emits an undifferentiated "piano" stream. That label is what
+    L5 has been guessing at -- ``assign_roles`` currently duplicates notes
+    between melody and bass because nothing tells it which line is the tune.
+    ``Note.instrument`` carries the label through, so the arrangement can take
+    the vocal line as the melody instead of deducing it from pitch ranges.
+
+    Weights are gated on HuggingFace (free account + accept the license) and
+    use Xet storage, so do NOT route them through hf-mirror.com -- see
+    requirements.txt. ``small`` mislabels this project's test song's guitar as
+    piano and finds half as many vocal notes as ``medium`` does, so medium is
+    the default even though it costs ~1.1x realtime on CPU.
+    """
+
+    _MODELS: dict = {}          # size -> loaded model (weights are ~1.2 GB)
+
+    def __init__(self, size: str = "medium"):
+        if size not in ("small", "medium", "large"):
+            raise ValueError(f"muscriptor size must be small/medium/large, got {size!r}")
+        self._size = size
+
+    def _model(self):
+        if self._size not in MuScriptorBackend._MODELS:
+            try:
+                from muscriptor import TranscriptionModel
+            except ImportError as e:
+                raise RuntimeError(
+                    "MuScriptor is not installed. Run: pip install muscriptor\n"
+                    "Its weights are gated: accept the license at\n"
+                    "  https://huggingface.co/MuScriptor/muscriptor-medium\n"
+                    "then set HF_TOKEN (see requirements.txt)."
+                ) from e
+            MuScriptorBackend._MODELS[self._size] = TranscriptionModel.load_model(
+                self._size)
+        return MuScriptorBackend._MODELS[self._size]
+
+    def transcribe(self, path: str) -> list[Note]:
+        import io
+        import pretty_midi
+        midi_bytes = self._model().transcribe_to_midi(path)
+        pm = pretty_midi.PrettyMIDI(io.BytesIO(midi_bytes))
+        notes: list[Note] = []
+        for tid, instr in enumerate(pm.instruments):
+            if instr.is_drum or not instr.notes:
+                continue            # a drum hit has no pitch to put on a string
+            # Prefer the name the model wrote on the track ("voice") over the
+            # GM table's name for the same program number, which is "Choir
+            # Aahs" for program 52 -- anything matching the melody by the word
+            # "voice" silently finds nothing if the GM name is used instead.
+            label = (instr.name or "").strip() or \
+                pretty_midi.program_to_instrument_name(instr.program)
+            for n in instr.notes:
+                notes.append(Note(
+                    pitch=n.pitch,
+                    onset=float(n.start),
+                    duration=max(0.05, float(n.end - n.start)),
+                    velocity=int(n.velocity),
+                    instrument=label.lower(),
+                    track_id=tid,
+                ))
+        notes.sort(key=lambda x: (x.onset, -x.pitch))
+        return notes
+
+
 # --------------------------------------------------------------------------- #
 #  Availability checks & factory                                              #
 # --------------------------------------------------------------------------- #
+
+def muscriptor_available() -> bool:
+    try:
+        import muscriptor  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
 
 def yourmt3_available() -> bool:
     try:
@@ -243,12 +319,19 @@ def get_amt_backend(kind: str = "auto") -> TranscriptionBackend:
     """Pick an AMT backend for audio transcription.
 
     kind:
+      "muscriptor"  — MuScriptor (labels instruments; needs gated HF weights)
       "yourmt3"     — force YourMT3+ (raises at transcribe time if unconfigured)
       "basic-pitch" — force Basic-Pitch
       "auto"        — YourMT3+ if installed, else Basic-Pitch
+
+    "auto" deliberately does not pick MuScriptor: its weights are gated, so an
+    unattended run must not start by failing on a license page. Ask for it by
+    name.
     """
     if kind == "yourmt3":
         return YourMT3Backend()
+    if kind == "muscriptor":
+        return MuScriptorBackend()
     if kind == "basic-pitch":
         return BasicPitchBackend()
     if kind == "auto":
@@ -266,7 +349,7 @@ def get_backend(kind: str = "auto", audio_path: str = "") -> TranscriptionBacken
     """
     if kind == "midi" or (audio_path and audio_path.lower().endswith((".mid", ".midi"))):
         return MidiFileBackend()
-    if kind in ("yourmt3", "basic-pitch"):
+    if kind in ("yourmt3", "basic-pitch", "muscriptor"):
         return get_amt_backend(kind)
     return get_amt_backend("auto")
 
@@ -306,6 +389,13 @@ def transcribe_audio(
         All notes merged & sorted by onset, with ``instrument`` / ``track_id``
         set per stem.
     """
+    # MuScriptor separates by *labelling* what it hears (voice / guitar / piano
+    # / drums), which is the job demucs was doing here -- and it needs the full
+    # mix to do it. Feeding it one stem at a time would discard the labels that
+    # make it useful and pay the model once per stem.
+    if amt == "muscriptor":
+        return MuScriptorBackend().transcribe(path)
+
     # L2: separate
     sep_kind = "auto" if use_separation else "passthrough"
     separator = get_separator(sep_kind)

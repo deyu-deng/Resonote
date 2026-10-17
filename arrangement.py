@@ -108,6 +108,32 @@ def _nearest_mid_pitch(pc: int, lo: int = 55, hi: int = 72) -> int:
 # --------------------------------------------------------------------------- #
 # 1. ROLE assignment
 # --------------------------------------------------------------------------- #
+def _role_for_instrument(inst: str) -> Optional[Role]:
+    """Which arranging role an instrument label implies, or None if the note
+    is unlabeled.
+
+    Matching is by word family, not exact string, because the label depends on
+    who produced it: demucs says "vocals", MuScriptor says "voice", and the GM
+    table would have called the same track "Choir Aahs". An exact match on one
+    of those silently drops the others into the melody pile, which is how the
+    arrangement ended up doubling the whole mix as a tune and then layering
+    derived bass and harmony on top of it.
+    """
+    s = (inst or "").lower()
+    if not s or s == "midi":
+        return None
+    if any(w in s for w in ("bass",)):
+        return Role.BASS
+    if any(w in s for w in ("voice", "vocal", "sing", "lead", "melody", "rap")):
+        return Role.MELODY
+    if any(w in s for w in ("guitar", "piano", "keys", "keyboard", "organ",
+                            "synth", "pad", "harp", "celeste", "other",
+                            "accompaniment", "harmony", "strings", "brass",
+                            "wood", "flute", "violin")):
+        return Role.HARMONY
+    return None
+
+
 def assign_roles(notes: Sequence[Note], analysis: Optional[AnalysisResult]) -> Arrangement:
     """Split input notes into melody/bass/harmony, deriving bass+harmony from
     the L4 chord timeline when the input is essentially a single melody line
@@ -117,29 +143,19 @@ def assign_roles(notes: Sequence[Note], analysis: Optional[AnalysisResult]) -> A
     bass_in: List[RoleNote] = []
     harmony_in: List[RoleNote] = []
 
-    stems = {n.instrument for n in notes}
-    has_bass_stem = any(s == "bass" for s in stems)
-    has_other_stem = any(s in ("other", "accompaniment", "piano") for s in stems)
-
     for n in notes:
         rn = RoleNote(pitch=n.pitch, onset=n.onset, duration=n.duration,
                       velocity=n.velocity, source=n.instrument)
-        inst = n.instrument
-        if inst == "bass":
-            rn.role = Role.BASS
-            bass_in.append(rn)
-        elif inst in ("vocals", "lead", "melody"):
-            rn.role = Role.MELODY
-            melody.append(rn)
-        elif inst in ("other", "accompaniment", "piano", "harmony"):
-            rn.role = Role.HARMONY
-            harmony_in.append(rn)
-        else:
-            # unlabeled -> treat as melody (monophonic input)
-            rn.role = Role.MELODY
-            melody.append(rn)
+        role = _role_for_instrument(n.instrument)
+        if role is None:
+            role = Role.MELODY       # unlabeled input: assume a bare tune line
+        rn.role = role
+        {Role.MELODY: melody, Role.BASS: bass_in, Role.HARMONY: harmony_in}[role].append(rn)
 
-    # If the input is a bare melody line, DERIVE bass + harmony from chords.
+    # Derive accompaniment only when nothing real was heard to stand in for it.
+    has_bass_stem = bool(bass_in)
+    has_other_stem = bool(harmony_in)
+
     derived_bass: List[RoleNote] = []
     derived_harmony: List[RoleNote] = []
     if analysis is not None and analysis.chords and not (has_bass_stem or has_other_stem):
