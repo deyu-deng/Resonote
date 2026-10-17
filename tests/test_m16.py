@@ -167,6 +167,10 @@ def test_gp5_title_drops_what_the_format_cannot_hold():
     assert _gp5_text("Melody - David Tao") == "Melody - David Tao"
     assert _gp5_text("纯中文") == "Resonote", "nothing legible -> neutral name"
     assert "?" not in _gp5_text("Melody — 陶喆")
+    # the shape a real "歌手 - 歌名.mp3" filename actually arrives in
+    assert _gp5_text("陶喆 - Melody") == "Melody", "dangling lead-in"
+    assert _gp5_text("— 无缘") == "Resonote", "dash plus CJK leaves nothing legible"
+    assert _gp5_text("陶喆《Melody》") == "Melody"
 
 
 def test_a_cjk_title_writes_a_gp5_instead_of_crashing(tmp_path):

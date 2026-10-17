@@ -183,9 +183,10 @@ def _gp5_text(text: str) -> str:
     except UnicodeEncodeError:
         pass
     kept = "".join(c for c in text if _cp1252_ok(c))
-    # a dropped " 陶喆" leaves a dangling " — " behind; trim the punctuation that
-    # was only ever there to introduce it
-    kept = kept.rstrip(" \t-–—:,/&(").strip()
+    # Dropped characters leave behind the punctuation that only ever introduced
+    # them. Trim both ends, not just the tail: the common "歌手 - 歌名" filename
+    # loses its lead-in and would otherwise print as "- Melody".
+    kept = kept.strip().strip(" \t-–—:,/&(").strip()
     return kept or "Resonote"
 
 
