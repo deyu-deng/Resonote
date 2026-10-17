@@ -144,6 +144,8 @@ def main():
     ap.add_argument("--amt", choices=["auto", "basic-pitch", "muscriptor", "yourmt3"],
                     default="auto",
                     help="audio transcription backend (L3)")
+    ap.add_argument("--title", default=None,
+                    help="score title printed on the page; defaults to the input file's name")
     ap.add_argument("--dump-intermediate", default=None, metavar="DIR",
                     help="dump separated stems + transcribed notes to DIR for debugging")
     ap.add_argument("--style", choices=["fingerstyle", "folk", "jazz", "classical"],
@@ -220,6 +222,7 @@ def main():
             pdf_path=args.pdf,
             musicxml_path=args.musicxml,
             tempo=args.tempo,
+            title=args.title,
         )
     else:
         res = run(
@@ -237,6 +240,7 @@ def main():
             html_path=args.html,
             musicxml_path=args.musicxml,
             judgment_file=args.judgment,
+            title=args.title,
         )
 
     # --- friendly console output ---

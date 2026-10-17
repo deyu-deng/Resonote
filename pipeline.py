@@ -111,6 +111,7 @@ def run(input_path: Optional[str] = None, *,
         html_path: Optional[str] = None,
         musicxml_path: Optional[str] = None,
         judgment_file: Optional[str] = None,
+        title: Optional[str] = None,
         emit_midi: bool = True,
         emit_wav: bool = True) -> PipelineResult:
     """Run the full pipeline and return a :class:`PipelineResult`.
@@ -155,8 +156,8 @@ def run(input_path: Optional[str] = None, *,
     # The song's own name, not a placeholder: this lands in the printed score's
     # title block, and "Resonote" on every export is what a template says, not
     # what a person wants to hand someone.
-    score_title = (os.path.splitext(os.path.basename(input_path))[0]
-                   if input_path else "Resonote")
+    score_title = title or (os.path.splitext(os.path.basename(input_path))[0]
+                         if input_path else "Resonote")
 
     # --- exports (in-memory always; to disk when a path is given) ---
     if gp5_path:
@@ -232,7 +233,8 @@ def run_import(tab_path: str, *,
                emit_midi: bool = True,
                emit_wav: bool = True,
                tempo: Optional[float] = None,
-               track_index: int = 0) -> PipelineResult:
+               track_index: int = 0,
+               title: Optional[str] = None) -> PipelineResult:
     """Import an existing tab file and re-export it -- no re-arrangement.
 
     A tab somebody already made is ground truth: we keep the ``string`` /
@@ -250,7 +252,7 @@ def run_import(tab_path: str, *,
     if not placed:
         raise ValueError(f"{tab_path}: no notes could be imported")
 
-    title = score.title or score.track_name or "Resonote"
+    title = title or score.title or score.track_name or "Resonote"
     gp5_bytes = b""
     if gp5_path:
         to_gp5(placed, gp5_path, tempo=score.tempo, title=title,

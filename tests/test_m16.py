@@ -154,3 +154,26 @@ def test_a_broken_renderer_never_costs_the_preview(monkeypatch, tmp_path):
                     finger=0)], out)
     assert backend == "karplus-strong (built-in)"
     assert os.path.exists(out)
+
+
+def test_gp5_title_drops_what_the_format_cannot_hold():
+    """GP5 encodes strings as code page 1252, so a Chinese song title cannot be
+    stored -- pyguitarpro raised UnicodeEncodeError from inside the write and
+    cost the whole run. Substituting '?' is not the fix: 'Melody — ??' prints
+    like a bug. Keep the legible part, and the real title goes to MusicXML."""
+    from gp_export import _gp5_text
+    assert _gp5_text("Melody — 陶喆") == "Melody"
+    assert _gp5_text("Rain 雨下一整晚") == "Rain"
+    assert _gp5_text("Melody - David Tao") == "Melody - David Tao"
+    assert _gp5_text("纯中文") == "Resonote", "nothing legible -> neutral name"
+    assert "?" not in _gp5_text("Melody — 陶喆")
+
+
+def test_a_cjk_title_writes_a_gp5_instead_of_crashing(tmp_path):
+    from gp_export import to_gp5
+    from models import PlacedNote
+    out = str(tmp_path / "t.gp5")
+    to_gp5([PlacedNote(pitch=64, onset=0.0, duration=0.5, string=1, fret=0,
+                       finger=0)], out, tempo=111.0, title="Melody — 陶喆")
+    import guitarpro as gp
+    assert gp.parse(out).title == "Melody"

@@ -164,6 +164,39 @@ def _emit_beat(voice, sounding, attacks, plen: int) -> None:
     voice.beats.append(beat)
 
 
+def _gp5_text(text: str) -> str:
+    """GP5 stores strings in code page 1252 (Windows Latin-1), so a title with
+    anything outside it -- Chinese song names being the obvious case -- cannot
+    be written at all: pyguitarpro raises UnicodeEncodeError from deep inside
+    the write. Keep the part the format can hold rather than losing the score;
+    MusicXML/PDF carry the real title, since those are UTF-8.
+
+    Unencodable characters are dropped, not replaced with "?": "Melody — ??"
+    is what a substitution prints onto the page, and it looks like a bug even
+    when nothing failed.
+    """
+    if not text:
+        return "Resonote"
+    try:
+        text.encode("cp1252")
+        return text
+    except UnicodeEncodeError:
+        pass
+    kept = "".join(c for c in text if _cp1252_ok(c))
+    # a dropped " 陶喆" leaves a dangling " — " behind; trim the punctuation that
+    # was only ever there to introduce it
+    kept = kept.rstrip(" \t-–—:,/&(").strip()
+    return kept or "Resonote"
+
+
+def _cp1252_ok(ch: str) -> bool:
+    try:
+        ch.encode("cp1252")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
 def to_gp5(placed, out_path, tempo: float = 120, title: str = "Resonote",
            anchor: Optional[float] = None, tuning: Optional[Sequence[int]] = None):
     """Write placed notes to a .gp5 file. Returns out_path.
@@ -179,7 +212,7 @@ def to_gp5(placed, out_path, tempo: float = 120, title: str = "Resonote",
     standard tuning and every pitch will come out wrong.
     """
     song = gp.Song()
-    song.title = title
+    song.title = _gp5_text(title)
     song.tempo = tempo
 
     strings = list(tuning) if tuning else list(STANDARD_TUNING)
