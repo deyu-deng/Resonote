@@ -178,6 +178,27 @@ class YourMT3Backend(TranscriptionBackend):
 #  Basic-Pitch backend (fallback)                                             #
 # --------------------------------------------------------------------------- #
 
+def _is_octave_ghost(start: float, end: float, pitch: int, kept: list[Note]) -> bool:
+    """True when an already-kept note sits an octave (or two) below and spans
+    this one.
+
+    Basic-Pitch's classic failure mode is hearing a note an octave too high. The
+    ghost is nearly always the weaker of the pair, so dropping it by *pitch
+    relationship* works on a real mix, while a confidence number calibrated on
+    clean synth tones deletes whole registers there. Two octaves is included
+    because the errors stack: on the calibration melody one ghost sat at +24 and
+    sailed past a +12-only check.
+    """
+    span = max(float(end) - float(start), 1e-6)
+    for k in kept:
+        if k.pitch not in (int(pitch) - 12, int(pitch) - 24):
+            continue
+        overlap = min(float(end), k.onset + k.duration) - max(float(start), k.onset)
+        if overlap >= 0.5 * span:
+            return True
+    return False
+
+
 class BasicPitchBackend(TranscriptionBackend):
     """Transcribe audio with Basic-Pitch (Spotify, Apache-2.0).
 
@@ -188,13 +209,16 @@ class BasicPitchBackend(TranscriptionBackend):
     Python 3.12 macOS wheel, so letting it choose TensorFlow would make the
     audio path uninstallable on half our dev machines.
 
-    ``min_confidence`` drops the notes the model is unsure about. On a synth
-    melody with eight known pitches, the correct notes scored 0.71-0.74 while
-    six spurious octave-up ghost notes scored 0.31-0.48; those ghosts otherwise
-    flow into arrangement as extra strings to fret.
+    ``min_confidence`` is a floor for the notes the model barely believes at
+    all, not the octave-ghost guard: on a real master Basic-Pitch's median
+    confidence is ~0.46, so a threshold tuned on clean synth tones (where true
+    notes scored 0.71) quietly deletes the bass -- 0.5 kept 40% of a 60-second
+    excerpt and one of its twenty-four low notes. Ghosts are removed by what
+    they are instead: a duplicate exactly twelve semitones above a note the
+    model liked more, over the same span.
     """
 
-    def __init__(self, model: str | None = None, min_confidence: float = 0.5):
+    def __init__(self, model: str | None = None, min_confidence: float = 0.3):
         self._model = model
         self._min_confidence = min_confidence
 
@@ -229,18 +253,23 @@ class BasicPitchBackend(TranscriptionBackend):
         # the 11 frames this layer once lost a song over. Don't lower it.
         _model_output, _midi, note_events = predict(path, self._model or self._onnx_model_path())
 
-        notes = []
-        for start, end, pitch, confidence, _bends in note_events:
+        # Strongest first: a survivor must never be explained away by a weaker
+        # note that happens to come later in the list.
+        kept: list[Note] = []
+        for start, end, pitch, confidence, _bends in sorted(
+                note_events, key=lambda e: -e[3]):
             if confidence < self._min_confidence:
                 continue
-            notes.append(Note(
+            if _is_octave_ghost(start, end, pitch, kept):
+                continue
+            kept.append(Note(
                 pitch=int(pitch),
                 onset=float(start),
                 duration=max(0.05, float(end) - float(start)),
                 velocity=int(round(127 * confidence)),   # basic_pitch's own mapping
             ))
-        notes.sort(key=lambda n: (n.onset, -n.pitch))
-        return notes
+        kept.sort(key=lambda n: (n.onset, -n.pitch))
+        return kept
 
 
 class MuScriptorBackend(TranscriptionBackend):

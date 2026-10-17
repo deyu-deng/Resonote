@@ -166,17 +166,25 @@ def test_basic_pitch_prefers_the_onnx_asset():
           f"({os.path.getsize(path) // 1024} KB) without TensorFlow")
 
 
-def test_basic_pitch_drops_low_confidence_notes(monkeypatch):
-    """On a synth melody the model scored its eight real notes 0.71-0.74 and six
-    octave-up ghosts 0.31-0.48. Unguarded, the ghosts reach arrangement as extra
-    strings to fret. predict() is stood in so the real model stays out of tests."""
+def test_basic_pitch_drops_ghosts_by_octave_not_by_threshold(monkeypatch):
+    """Two guards, and they must not be confused for each other.
+
+    On a real master Basic-Pitch's median confidence is ~0.46, so the old
+    synth-calibrated 0.5 floor kept 40% of the notes and left 1 of 24 bass
+    notes. Ghosts are removed by structure instead -- a weaker note exactly
+    twelve semitones above one already kept, sharing its span -- while the floor
+    stays a low, register-neutral sanity bound. predict() is stood in so the real
+    model stays out of tests.
+    """
     import types
     import transcribe as tr
 
     events = [
-        (0.00, 0.45, 69, 0.73, None),    # real note
-        (0.50, 0.95, 84, 0.33, None),    # octave-up ghost
-        (1.00, 1.40, 72, 0.50, None),    # exactly at the default threshold
+        (0.00, 0.45, 69, 0.73, None),   # real note
+        (0.02, 0.40, 81, 0.41, None),   # +12 ghost of it -> dropped by structure
+        (0.05, 0.40, 93, 0.30, None),   # +24 ghost -> same rule, wider interval
+        (0.50, 0.95, 72, 0.34, None),   # weak but alone -> survives the floor
+        (1.00, 1.40, 74, 0.18, None),   # below the floor -> dropped
     ]
     inference = types.ModuleType("basic_pitch.inference")
     inference.predict = lambda audio_path, model, **kw: ({}, None, events)
@@ -189,9 +197,11 @@ def test_basic_pitch_drops_low_confidence_notes(monkeypatch):
     monkeypatch.setitem(sys.modules, "basic_pitch.inference", inference)
 
     notes = tr.BasicPitchBackend().transcribe("song.wav")
-    assert [n.pitch for n in notes] == [69, 72], "ghost note survived the filter"
+    assert [n.pitch for n in notes] == [69, 72], (
+        "expected the octave ghost and the sub-floor note gone, the weak solo "
+        f"note kept: {[n.pitch for n in notes]}")
     assert notes[0].velocity == 93, notes[0].velocity   # round(127 * 0.73)
-    print("OK: 低把握度的幽灵音被滤掉，力度沿用 basic_pitch 自己的换算")
+    print("OK: 八度幽灵按结构剔除，低音不再被阈值整片删掉")
 
 
 # --------------------------------------------------------------------------- #
